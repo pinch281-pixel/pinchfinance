@@ -9,14 +9,20 @@
    This file owns the interface: helpers, roles and permissions, the router,
    every view, the modals and the sound effects. It is loaded after
    supabase.js and starts the app from init() at the bottom.
+
+   Created and owned by James Carlo H. Cadayona.
+   Developed under PINCH Software.
    ========================================================================== */
 
 var VERSION = '0.4.1';
 var RELEASE = 'Beta 2';
-var BUILD = 'r149';
+var BUILD = 'r170';
 var EDITION = 'Standard Edition';
 var PRODUCT = 'PINCH Finance';
 var DEVELOPER = 'PINCH Software';
+var OWNER = 'James Carlo H. Cadayona';
+var OWNER_LINE = 'Created and owned by James Carlo H. Cadayona';
+var OWNER_SUB = 'Developed under PINCH Software.';
 var CFG_KEY = 'pinch.config';
 var PAGE_SIZE = 25;
 
@@ -116,6 +122,13 @@ function permMatrixFor(role) {
 }
 function can(key) { return !!(me.perms && me.perms[key]); }
 function roleLabel(r) { return r === 'admin' ? 'Administrator' : r.charAt(0).toUpperCase() + r.slice(1); }
+
+/* The application role shown to the signed-in user.
+   Every registered account - the software owner's included - holds the same
+   role. Ownership is attribution, never a privilege: RLS scopes every row to
+   auth.uid(), so no account can read another account's financial records. */
+function appRoleLabel() { return 'Standard User'; }
+
 function rolePill(r) { return '<span class="role-pill role-' + esc(r) + '">' + esc(roleLabel(r)) + '</span>'; }
 function applyRole(role) {
   me.role = role;
@@ -285,8 +298,8 @@ function renderShell() {
   $('#side-avatar').textContent = initials(profile && profile.full_name, user && user.email);
   var badge = $('#side-role');
   if (badge) {
-    badge.className = 'role-pill role-' + esc(me.role);
-    badge.textContent = roleLabel(me.role);
+    badge.className = 'role-pill role-viewer';
+    badge.textContent = appRoleLabel();
   }
   var sub = $('#side-build');
   if (sub) sub.textContent = EDITION + ' · ' + RELEASE + ' · v' + VERSION;
@@ -314,7 +327,7 @@ function showView(name) {
   };
   if (gate[name] && !can(gate[name])) {
     var el = document.getElementById('view-' + name);
-    if (el) el.innerHTML = '<div class="card">' + emptyState('Not available for your role', 'The ' + roleLabel(me.role) + ' role does not include ' + TITLES[name].toLowerCase() + ' access.') + '</div>';
+    if (el) el.innerHTML = '<div class="card">' + emptyState('Not available for your role', 'The ' + appRoleLabel() + ' role does not include ' + TITLES[name].toLowerCase() + ' access.') + '</div>';
     $$('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
     $$('.nav-item').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-view') === name); });
     $('#page-title').textContent = TITLES[name];
@@ -2125,7 +2138,11 @@ VIEW_LOADERS.profile = async function () {
           '<button class="btn ghost small" type="button" id="pf-signout">Sign out</button>' +
           '<button class="btn danger small" type="button" id="pf-disconnect">Change Supabase project</button>' +
         '</div>' +
-        '<p class="muted small" style="margin-top:14px">' + esc(PRODUCT) + ' ' + esc(EDITION) + ' · v' + esc(VERSION) + ' ' + esc(RELEASE) + ' (' + esc(BUILD) + ') · Developed by ' + esc(DEVELOPER) + '. Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.</p>' +
+        '<p class="muted small" style="margin-top:14px">' + esc(PRODUCT) + ' ' + esc(EDITION) + ' · v' + esc(VERSION) + ' ' + esc(RELEASE) + '. Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.</p>' +
+        '<div class="credits">' +
+          '<div><strong>' + esc(OWNER_LINE) + '</strong></div>' +
+          '<div>' + esc(OWNER_SUB) + '</div>' +
+        '</div>' +
       '</div></div>';
     el.innerHTML = html;
 

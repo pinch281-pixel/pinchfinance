@@ -14,6 +14,9 @@
 
    It is loaded before script.js. Nothing here runs on load; the client is
    created by boot(), which script.js calls from its init().
+
+   Created and owned by James Carlo H. Cadayona.
+   Developed under PINCH Software.
    ========================================================================== */
 
 /* Project connection. Only the public publishable (anon) key belongs here.

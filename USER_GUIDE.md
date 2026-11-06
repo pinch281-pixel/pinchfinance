@@ -5,7 +5,11 @@
 | **Product** | PINCH Finance |
 | **Edition** | Standard Edition |
 | **Version** | Beta 2 (v0.4.1) |
-| **Developer** | PINCH Software |
+| **Software owner and creator** | James Carlo H. Cadayona |
+| **Software developer / brand** | PINCH Software |
+
+> **Created and owned by James Carlo H. Cadayona**
+> **Developed under PINCH Software.**
 
 This guide covers day-to-day use. For installation, see `README.md`.
 
@@ -236,6 +240,16 @@ is named after the period, e.g. `pinch-report-2026.csv`.
 ---
 
 ## 10. Team and roles
+
+### Your application role
+
+Every account in PINCH Finance holds the same role: **Standard User**. That
+includes the account of the person who created the software.
+
+The owner's name appears in the sidebar and on the Profile page as attribution.
+It does not grant extra access. No account can open another account's bank
+accounts, transactions, transfers or budgets, because the database itself
+scopes every row to the signed-in user.
 
 **Team and roles** in the sidebar. Owners and administrators can manage members;
 everyone else sees a permission summary instead.

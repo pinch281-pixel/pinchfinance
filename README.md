@@ -5,7 +5,11 @@
 | **Product** | PINCH Finance |
 | **Edition** | Standard Edition |
 | **Version** | Beta 2 (v0.4.1) |
-| **Developer** | PINCH Software |
+| **Software owner and creator** | James Carlo H. Cadayona |
+| **Software developer / brand** | PINCH Software |
+
+> **Created and owned by James Carlo H. Cadayona**
+> **Developed under PINCH Software.**
 
 Personal and small-team finance on Supabase: bank accounts, income, expenses,
 internal transfers, budgets and reports.
@@ -172,6 +176,20 @@ accounts page both call it, so the two screens can never disagree.
 
 ---
 
+## User role policy
+
+Every registered account holds the same application role: **Standard User**.
+
+That includes the software owner's personal account. Ownership is attribution
+only and carries no extra financial privileges:
+
+- No account has a special administrator role.
+- No account can read another account's financial records. Every table is
+  protected by RLS policies scoped to `auth.uid()`, so a query can only ever
+  return the signed-in user's own rows.
+- The owner's login sees exactly the same screens and the same data boundary as
+  any other account.
+
 ## Roles
 
 | Capability | Owner | Administrator | Editor | Viewer |
@@ -259,4 +277,5 @@ and running version, so you can confirm which build the browser actually loaded.
 | Product | PINCH Finance |
 | Edition | Standard Edition |
 | Version | Beta 2 (v0.4.1) |
-| Developer | PINCH Software |
+| Software owner and creator | James Carlo H. Cadayona |
+| Software developer / brand | PINCH Software |
