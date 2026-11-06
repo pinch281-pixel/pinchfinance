@@ -285,6 +285,7 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px}
       <button class="nav-item" data-view="expenses" type="button">Expenses</button>
       <div class="nav-sep"></div>
       <button class="nav-item" data-view="accounts" type="button">Bank accounts</button>
+      <button class="nav-item" data-view="transfers" type="button">Transfers</button>
       <button class="nav-item" data-view="categories" type="button">Categories</button>
       <button class="nav-item" data-view="budgets" type="button">Budgets</button>
       <button class="nav-item" data-view="reports" type="button">Reports</button>
@@ -320,6 +321,7 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px}
       <div id="stage2-notice" class="hidden"></div>
       <section class="view" id="view-dashboard"></section>
       <section class="view" id="view-accounts"></section>
+      <section class="view" id="view-transfers"></section>
       <section class="view" id="view-categories"></section>
       <section class="view" id="view-budgets"></section>
       <section class="view" id="view-reports"></section>
@@ -342,8 +344,8 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px}
    All financial data lives in Supabase. Nothing is mocked.
    ============================================================ */
 
-var VERSION = '0.2.1';
-var BUILD = 'r102';
+var VERSION = '0.3.2';
+var BUILD = 'r132';
 var CFG_KEY = 'pinch.config';
 var PAGE_SIZE = 25;
 
@@ -424,10 +426,11 @@ var cats = [];
 var accounts = [];
 var members = [];
 var appReady = false;
+var acctSaving = false;
 var TITLES = {
   dashboard: 'Dashboard', transactions: 'Transactions', income: 'Income', expenses: 'Expenses',
-  accounts: 'Bank accounts', categories: 'Categories', budgets: 'Budgets', reports: 'Reports',
-  team: 'Team', profile: 'Profile'
+  accounts: 'Bank accounts', transfers: 'Transfers', categories: 'Categories', budgets: 'Budgets',
+  reports: 'Reports', team: 'Team', profile: 'Profile'
 };
 
 /* ---------- role-based access control ----------
@@ -468,15 +471,16 @@ function applyRole(role) {
 function applyNavVisibility() {
   var map = {
     dashboard: 'dashboard_view', transactions: 'transactions_view', income: 'transactions_view',
-    expenses: 'transactions_view', accounts: 'accounts_view', categories: 'transactions_view',
-    budgets: 'budgets_manage', reports: 'reports_view', team: 'users_manage', profile: null
+    expenses: 'transactions_view', accounts: 'accounts_view', transfers: 'transactions_view',
+    categories: 'transactions_view', budgets: 'budgets_manage', reports: 'reports_view',
+    team: 'users_manage', profile: null
   };
   $$('.nav-item').forEach(function (b) {
     var view = b.getAttribute('data-view');
     var need = map[view];
     var hidden = !!(need && !can(need));
-    /* Accounts and Team need the Stage 2 tables to exist. */
-    if (!stage2Ready && (view === 'accounts' || view === 'team')) hidden = true;
+    /* Accounts, Transfers and Team need the Stage 2 tables to exist. */
+    if (!stage2Ready && (view === 'accounts' || view === 'transfers' || view === 'team')) hidden = true;
     b.classList.toggle('hidden', hidden);
   });
   var quick = $('#quick-add');
@@ -631,47 +635,107 @@ function loadSupabaseLib() {
    the client then refreshes the access token in the background on its own.
    Persistence is unconditional - there is no "remember me" flag anywhere.
 
-   The session object is written to the artifact key-value store, which
-   outlives the tab, the browser and the machine, with an in-memory mirror
-   for the current page. Financial records never go here; they stay in
-   Supabase and every request still carries the user's JWT, so RLS applies
-   exactly as before.
+   The artifact key-value store is asynchronous. If the Supabase client read
+   it lazily, getSession() would race the read and conclude "no session" on
+   every refresh, which is exactly the bug that bounced users back to the
+   login page. So the whole auth namespace is hydrated into memory BEFORE
+   the client is created. After that the adapter answers synchronously and
+   writes through to the store in the background.
+
+   Financial records never go here; they stay in Supabase and every request
+   still carries the user's JWT, so RLS applies exactly as before.
    ============================================================ */
 var AUTH_KEY = 'pinch.auth';
 var authMemory = {};
+
+/* True only while the stored session is being read at startup. The login
+   screen must not appear during this window. */
+var authRestoring = true;
+/* True once startup has decided between dashboard and login. */
+var authReady = false;
 
 function readMemory(k) {
   return Object.prototype.hasOwnProperty.call(authMemory, k) ? authMemory[k] : null;
 }
 
+/* Values are wrapped as { v: "<json string>" }. The wrapper keeps the session
+   intact whatever the store does with primitives, and makes "missing" distinct
+   from "empty". */
+function unwrap(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object' && typeof raw.v === 'string') return raw.v;
+  return null;
+}
+
+/* Load every persisted auth key into memory once, before createClient(). */
+async function hydrateAuthMemory() {
+  if (!STORE) return;
+
+  try {
+    var v = unwrap(await STORE.get(AUTH_KEY, { shared: false }));
+    if (v != null) authMemory[AUTH_KEY] = v;
+  } catch (e) { /* no stored session */ }
+
+  if (typeof STORE.list !== 'function') return;
+  var extra = [];
+  try {
+    var keys = await STORE.list({ shared: false });
+    (keys || []).forEach(function (k) {
+      k = String(k);
+      if (k.indexOf(AUTH_KEY) === 0 && k !== AUTH_KEY) extra.push(k);
+    });
+  } catch (e) {
+    return;
+  }
+  await Promise.all(extra.map(async function (k) {
+    try {
+      var raw = unwrap(await STORE.get(k, { shared: false }));
+      if (raw != null) authMemory[k] = raw;
+    } catch (e) { /* skip this key */ }
+  }));
+}
+
+/* Force the current session into the store and wait for the write to land.
+   Called right after sign-in and when the page is about to go away, so a
+   refresh can never outrun the save. */
+async function persistSessionNow(s) {
+  if (!s) return;
+  var raw;
+  try { raw = JSON.stringify(s); } catch (e) { return; }
+  authMemory[AUTH_KEY] = raw;
+  if (!STORE) return;
+  try { await STORE.set(AUTH_KEY, { v: raw }, { shared: false }); } catch (e) { /* ignore */ }
+}
+
+/* Synchronous reads, write-through writes. supabase-js passes the full
+   storageKey (and its companions), so no extra prefixing is applied here. */
 function makeAuthStorage() {
   return {
-    getItem: function (k) {
-      if (!STORE) return readMemory(k);
-      return STORE.get(AUTH_KEY + '.' + k, { shared: false })
-        .then(function (v) {
-          if (v == null) return readMemory(k);
-          return typeof v === 'string' ? v : JSON.stringify(v);
-        })
-        .catch(function () { return readMemory(k); });
-    },
+    getItem: function (k) { return readMemory(k); },
     setItem: function (k, v) {
       authMemory[k] = v;
       if (!STORE) return;
-      return STORE.set(AUTH_KEY + '.' + k, v, { shared: false }).catch(function () { });
+      try { STORE.set(k, { v: v }, { shared: false }); } catch (e) { /* ignore */ }
     },
     removeItem: function (k) {
       delete authMemory[k];
       if (!STORE) return;
-      return STORE.delete(AUTH_KEY + '.' + k, { shared: false }).catch(function () { });
+      try { STORE.delete(k, { shared: false }); } catch (e) { /* ignore */ }
     }
   };
 }
 
 /* Wipe every key the session could have been written under. */
 function purgeSessionStorage() {
+  var known = Object.keys(authMemory);
   authMemory = {};
-  if (!STORE || !STORE.list) return;
+  if (!STORE) return;
+  known.forEach(function (k) {
+    try { STORE.delete(k, { shared: false }); } catch (e) { /* ignore */ }
+  });
+  /* Belt and braces: anything left under the auth prefix. */
+  if (typeof STORE.list !== 'function') return;
   try {
     var pending = STORE.list({ shared: false });
     if (pending && pending.then) {
@@ -835,22 +899,40 @@ function totals(rows) {
   return { income: inc, expense: exp, net: inc - exp };
 }
 
-/* ---------- boot ---------- */
+/* ---------- boot ----------
+   Startup order matters. Nothing may show the login screen until the stored
+   session has been read and validated, otherwise every refresh flashes the
+   login page and looks like a logout. */
 async function boot() {
+  show('boot');
   var cfg = await readCfg();
-  if (!cfg.url || !cfg.key) { show('setup'); return; }
+  if (!cfg.url || !cfg.key) {
+    authRestoring = false;
+    authReady = true;
+    show('setup');
+    return;
+  }
   await startClient(cfg);
 }
 
 async function startClient(cfg) {
   show('boot');
+  authRestoring = true;
+  authReady = false;
+
   try {
     await loadSupabaseLib();
   } catch (e) {
+    authRestoring = false;
     showNetblock('Could not load @supabase/supabase-js from any CDN.\n\n' + errMsg(e) +
       '\n\nIn a normal browser this means the page has no outbound network access.');
     return false;
   }
+
+  /* Read the persisted token pair into memory BEFORE the client exists, so its
+     first getSession() finds it instead of racing an async store read. */
+  try { await hydrateAuthMemory(); } catch (e) { /* start with an empty store */ }
+
   try {
     sb = window.supabase.createClient(cfg.url, cfg.key, {
       auth: {
@@ -864,43 +946,86 @@ async function startClient(cfg) {
       }
     });
   } catch (e) {
+    authRestoring = false;
     show('setup');
     setMsg('#setup-msg', 'Invalid project configuration: ' + errMsg(e), 'err');
     return false;
   }
+
+  /* Subscribe before reading the session so a refresh that lands during
+     startup is not missed. */
   sb.auth.onAuthStateChange(function (evt, s) {
     session = s || null;
     user = s ? s.user : null;
 
-    if (evt === 'SIGNED_OUT' || !s) {
+    /* Still restoring: let startup finish and decide. Do not redirect. */
+    if (authRestoring) return;
+
+    if (evt === 'SIGNED_OUT') {
+      /* Only a real sign-out, an expired refresh token or a revoked session
+         reaches this branch. */
       teardown();
       show('auth');
       return;
     }
 
-    /* A refreshed token is not a new login: keep the current view. */
+    if (!s) return;
+
+    /* A background refresh is not a new login: keep the current view. */
     if (evt === 'TOKEN_REFRESHED') return;
 
+    /* SIGNED_IN / INITIAL_SESSION / USER_UPDATED while the app is not up yet. */
     if (!appReady) setTimeout(function () { enterApp(); }, 0);
   });
+
+  var restored = null;
   try {
     var got = await sb.auth.getSession();
-    session = got && got.data ? got.data.session : null;
+    restored = got && got.data ? got.data.session : null;
   } catch (e) {
     if (isNetworkError(e)) {
+      authRestoring = false;
       showNetblock('Auth request failed: ' + errMsg(e) + '\nTarget: ' + cfg.url);
       return false;
     }
-    session = null;
+    restored = null;
   }
-  user = session ? session.user : null;
-  if (session) enterApp(); else show('auth');
+
+  /* A stored session can be structurally present but no longer valid. Ask the
+     auth server before trusting it, and drop it only when the server actually
+     rejects it - never on a network failure, or a flaky connection would log
+     the user out. */
+  if (restored) {
+    try {
+      var chk = await sb.auth.getUser();
+      if (chk && chk.error) {
+        var why = String((chk.error && chk.error.message) || '').toLowerCase();
+        var bad = why.indexOf('invalid') >= 0 || why.indexOf('expired') >= 0 ||
+                  why.indexOf('revoked') >= 0 || why.indexOf('not found') >= 0 ||
+                  why.indexOf('jwt') >= 0 || why.indexOf('refresh') >= 0;
+        if (bad) { purgeSessionStorage(); restored = null; }
+      }
+    } catch (e) { /* offline: keep the stored session */ }
+  }
+
+  /* Nothing stored: go to the login screen. A stored but stale access token is
+     fine - the client refreshes it and emits TOKEN_REFRESHED. */
+  authRestoring = false;
+  authReady = true;
+  session = restored;
+  user = restored ? restored.user : null;
+
+  if (restored) {
+    await enterApp();
+  } else {
+    show('auth');
+  }
   return true;
 }
 
 function teardown() {
   appReady = false;
-  user = null; session = null; profile = null; cats = [];
+  user = null; session = null; profile = null; cats = []; accounts = []; members = [];
   $('#modal-root').innerHTML = '';
   show('auth');
 }
@@ -1134,6 +1259,7 @@ VIEW_LOADERS.dashboard = async function () {
     var acctCards = '';
     if (can('accounts_view') && accounts.length) {
       acctCards = '<div class="card"><div class="card-head"><h2>Accounts</h2><div class="spacer"></div>' +
+        (can('accounts_create') ? '<button class="btn ghost small" type="button" data-newacct="1">+ Add new account</button>' : '') +
         '<button class="btn ghost small" type="button" data-goto="accounts">Manage</button></div>' +
         '<div class="acct-grid" style="margin-bottom:0">' +
         accounts.slice(0, 3).map(function (a) {
@@ -1542,6 +1668,7 @@ function openTxModal(existing, presetType) {
       }
       if (res.error) throw res.error;
       await loadAccounts();
+      playSound(t === 'income' ? 'incomeSaved' : 'expenseSaved');
       toast(isEdit ? 'Transaction updated' : 'Transaction added', 'ok');
       refreshCurrent();
     }
@@ -1565,6 +1692,7 @@ async function deleteTransaction(id) {
     var res = await sb.from('transactions').delete().eq('id', id);
     if (res.error) throw res.error;
     await loadAccounts();
+    playSound('transactionDeleted');
     toast('Transaction deleted', 'ok');
     refreshCurrent();
   } catch (e) { toast(errMsg(e), 'err'); }
@@ -1770,6 +1898,7 @@ VIEW_LOADERS.budgets = async function () {
       });
       var up = await sb.from('budgets').upsert(rows, { onConflict: 'user_id,category_id,period_month' });
       if (up.error) return toast(errMsg(up.error), 'err');
+      playSound('smartFill');
       toast('Copied ' + rows.length + ' budgets from ' + monthLabel(prev), 'ok');
       VIEW_LOADERS.budgets();
     });
@@ -1790,6 +1919,7 @@ VIEW_LOADERS.budgets = async function () {
               { onConflict: 'user_id,category_id,period_month' }
             );
             if (up.error) throw up.error;
+            playSound('budgetSaved');
             toast('Budget saved', 'ok');
           }
           VIEW_LOADERS.budgets();
@@ -1994,6 +2124,134 @@ function exportCsv(rows, label) {
 }
 
 /* ============================================================
+   Sound effects
+   ------------------------------------------------------------
+   Browsers block audio until a user gesture, so the context is created
+   lazily on the first click and every later cue reuses it. Each cue owns
+   one channel: replaying a cue stops its previous voice, and a short
+   global gap keeps two different cues from colliding.
+
+   Files are looked up as sounds/<NAME>.WAV next to the page. A missing
+   file disables that cue silently - a missing sound must never break a
+   database operation.
+   ============================================================ */
+var SOUND_BASE = 'sounds/';
+var SOUND_FILES = {
+  launch: 'LAUNCH.WAV',
+  calc: 'CALCULAT.WAV',
+  cashPlus: 'CASHPLS.WAV',
+  cashMinus: 'CASHMIN.WAV',
+  congrats: 'CONGRATS.WAV',
+  smartFill: 'SMARFILL.WAV',
+  rollover: 'ROLLOVER.WAV',
+  moveForward: 'MOVEFORW.WAV',
+  moveBack: 'MOVEBACK.WAV'
+};
+
+/* Cue names used by the app, mapped to the files above. */
+var SOUND_CUES = {
+  appLaunch: 'launch',
+  signIn: 'launch',
+  incomeSaved: 'cashPlus',
+  expenseSaved: 'cashMinus',
+  transactionDeleted: 'moveBack',
+  accountCreated: 'congrats',
+  accountDeleted: 'moveBack',
+  budgetSaved: 'smartFill',
+  transferPosted: 'calc',
+  transferConfirmed: 'moveForward',
+  transferDeleted: 'moveBack',
+  periodChanged: 'rollover'
+};
+
+var audioCtx = null;
+var soundBuffers = {};
+var soundVoices = {};
+var soundFailed = {};
+var soundEnabled = true;
+var lastCueAt = 0;
+var CUE_GAP_MS = 120;
+
+function soundSupported() {
+  return !!(window.AudioContext || window.webkitAudioContext);
+}
+
+function ensureAudio() {
+  if (!soundSupported()) return null;
+  if (!audioCtx) {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new Ctx();
+    } catch (e) { soundEnabled = false; return null; }
+  }
+  if (audioCtx.state === 'suspended') {
+    try { audioCtx.resume(); } catch (e) { /* ignore */ }
+  }
+  return audioCtx;
+}
+
+function loadSound(name) {
+  if (!soundEnabled || !SOUND_FILES[name] || soundFailed[name]) return;
+  if (soundBuffers[name]) return;
+  var ctx = ensureAudio();
+  if (!ctx) return;
+  var url = SOUND_BASE + SOUND_FILES[name];
+  fetch(url)
+    .then(function (r) { if (!r.ok) throw new Error('missing'); return r.arrayBuffer(); })
+    .then(function (buf) { return ctx.decodeAudioData(buf); })
+    .then(function (decoded) { soundBuffers[name] = decoded; })
+    .catch(function () { soundFailed[name] = true; });
+}
+
+function preloadSounds() {
+  Object.keys(SOUND_FILES).forEach(function (k) { loadSound(k); });
+}
+
+/* Play one cue. Never throws, never overlaps itself. */
+function playSound(cueName) {
+  if (!soundEnabled) return;
+  var name = SOUND_CUES[cueName];
+  if (!name || soundFailed[name]) return;
+  var ctx = ensureAudio();
+  if (!ctx) return;
+  if (!soundBuffers[name]) {
+    /* Fetch on demand, then play if it arrives quickly. */
+    loadSound(name);
+    return;
+  }
+  var now = Date.now();
+  if (now - lastCueAt < CUE_GAP_MS) return;
+  lastCueAt = now;
+  try {
+    var prev = soundVoices[name];
+    if (prev) { try { prev.stop(); } catch (e) { /* ignore */ } }
+    var src = ctx.createBufferSource();
+    src.buffer = soundBuffers[name];
+    var gain = ctx.createGain();
+    gain.gain.value = 0.6;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.onended = function () { if (soundVoices[name] === src) delete soundVoices[name]; };
+    src.start(0);
+    soundVoices[name] = src;
+  } catch (e) { /* audio failure must never surface */ }
+}
+
+/* Unlock audio on the first interaction of any kind. */
+function armAudioOnce() {
+  function unlock() {
+    ensureAudio();
+    preloadSounds();
+    document.removeEventListener('pointerdown', unlock);
+    document.removeEventListener('keydown', unlock);
+    document.removeEventListener('touchstart', unlock);
+  }
+  document.addEventListener('pointerdown', unlock, { once: true });
+  document.addEventListener('keydown', unlock, { once: true });
+  document.addEventListener('touchstart', unlock, { once: true });
+}
+
+/* ============================================================
    Bank accounts
    ============================================================ */
 var ACCOUNT_TYPES = [
@@ -2029,6 +2287,18 @@ VIEW_LOADERS.accounts = async function () {
     });
 
     var html = '';
+
+    /* The primary action lives in a toolbar so it stays reachable whether or
+       not any accounts exist yet. */
+    html += '<div class="toolbar" style="margin-bottom:16px">' +
+      '<div>' +
+        '<div style="font-weight:600;font-size:14px">Your accounts</div>' +
+        '<div class="muted small">' + accounts.length + ' on record · balances update from transactions and transfers</div>' +
+      '</div>' +
+      '<div class="spacer"></div>' +
+      (can('accounts_create') ? '<button class="btn" type="button" data-newacct="1">+ Add new account</button>' : '') +
+      '</div>';
+
     if (!can('accounts_create')) {
       html += '<div class="notice"><div>Your role can view accounts but not create, edit or delete them. Balances are read-only.</div></div>';
     }
@@ -2105,23 +2375,49 @@ function openAccountModal(existing) {
     submitLabel: isEdit ? 'Save changes' : 'Create account',
     onSubmit: async function () {
       requireSession();
+      if (acctSaving) throw new Error('This account is already being saved.');
       var name = $('#ac-name').value.trim();
       if (!name) throw new Error('Enter an account name.');
+      var opening = Math.round(num($('#ac-open').value) * 100) / 100;
+      if (!isFinite(opening)) throw new Error('Enter a valid opening balance.');
+
       var payload = {
         user_id: user.id,
         name: name,
         institution: $('#ac-inst').value.trim(),
         account_type: $('#ac-type').value,
         account_number: $('#ac-num').value.trim() || null,
-        opening_balance: Math.round(num($('#ac-open').value) * 100) / 100,
+        opening_balance: opening,
         currency: $('#ac-cur').value,
         status: $('#ac-status').value
       };
-      var res;
-      if (isEdit) res = await sb.from('bank_accounts').update(payload).eq('id', existing.id).select().single();
-      else res = await sb.from('bank_accounts').insert(payload).select().single();
-      if (res.error) throw res.error;
-      await loadAccounts();
+
+      acctSaving = true;
+      try {
+        var res, newId = null;
+        if (isEdit) {
+          res = await sb.from('bank_accounts').update(payload).eq('id', existing.id).select('id').single();
+          if (res.error) throw res.error;
+          newId = existing.id;
+        } else {
+          /* The insert response is not trusted for current_balance: RETURNING is
+             evaluated before the AFTER trigger recalculates, so it would read 0. */
+          res = await sb.from('bank_accounts').insert(payload).select('id').single();
+          if (res.error) throw res.error;
+          newId = res.data ? res.data.id : null;
+        }
+
+        /* Recalculate explicitly so the row is correct even if the trigger is
+           absent, then re-read the authoritative value. */
+        if (newId) {
+          try { await sb.rpc('recalc_account_balance', { p_account_id: newId }); } catch (e) { /* trigger already did it */ }
+        }
+        await loadAccounts();
+      } finally {
+        acctSaving = false;
+      }
+
+      playSound(isEdit ? 'smartFill' : 'accountCreated');
       toast(isEdit ? 'Account updated' : 'Account created', 'ok');
       refreshCurrent();
     }
@@ -2142,6 +2438,7 @@ async function deleteAccount(id) {
     var res = await sb.from('bank_accounts').delete().eq('id', id);
     if (res.error) throw res.error;
     await loadAccounts();
+    playSound('accountDeleted');
     toast('Account deleted', 'ok');
     refreshCurrent();
   } catch (e) { toast(errMsg(e), 'err'); }
@@ -2343,6 +2640,198 @@ function openInviteModal() {
 }
 
 /* ============================================================
+   Internal transfers
+   ============================================================ */
+var transfers = [];
+
+function refNumber() {
+  var d = new Date();
+  var stamp = String(d.getFullYear()) + pad2(d.getMonth() + 1) + pad2(d.getDate());
+  var rnd = Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 6).toUpperCase();
+  return 'TRF-' + stamp + '-' + rnd;
+}
+
+async function loadTransfers() {
+  if (!stage2Ready) { transfers = []; return transfers; }
+  try {
+    var res = await sb.from('transfers')
+      .select('id,from_account_id,to_account_id,amount,note,reference,occurred_on,created_at')
+      .order('occurred_on', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (res.error) throw res.error;
+    transfers = res.data || [];
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    transfers = [];
+    transfersReady = false;
+  }
+  return transfers;
+}
+var transfersReady = true;
+
+VIEW_LOADERS.transfers = async function () {
+  var el = $('#view-transfers');
+  $('#page-sub').textContent = 'Move money between your own accounts';
+  el.innerHTML = loadingCard('Loading transfers…');
+  try {
+    await loadAccounts();
+    await loadTransfers();
+
+    if (!stage2Ready || !transfersReady) {
+      el.innerHTML = '<div class="card">' + emptyState('Transfers need the Stage 3 tables',
+        'Run the migration SQL to add the transfers table and the atomic transfer function.',
+        '<button class="btn" type="button" data-stage2-sql="1">Show migration SQL</button>') + '</div>';
+      return;
+    }
+
+    var open = accounts.filter(function (a) { return a.status !== 'closed'; });
+    var html = '';
+
+    if (!open.length) {
+      el.innerHTML = '<div class="card">' + emptyState('Add an account first',
+        'A transfer needs at least two accounts. Create them in Bank accounts.',
+        '<button class="btn" type="button" data-goto="accounts">Go to Bank accounts</button>') + '</div>';
+      return;
+    }
+    if (open.length < 2) {
+      el.innerHTML = '<div class="card">' + emptyState('One more account needed',
+        'Transfers move money between two of your accounts. Add a second account to continue.',
+        '<button class="btn" type="button" data-newacct="1">Add account</button>') + '</div>';
+      return;
+    }
+
+    html += '<div class="card"><div class="toolbar">' +
+      '<span class="muted small">Transfers move money between your own accounts. They never count as income or expenses.</span>' +
+      '<div class="spacer"></div>' +
+      (can('transactions_create') ? '<button class="btn" type="button" data-newtransfer="1">+ New transfer</button>' : '') +
+      '</div>' +
+      '<div class="grid3">' +
+        kpi('Transfers recorded', String(transfers.length), 'Last 100 shown', '') +
+        kpi('Moved in total', money(transfers.reduce(function (s, t) { return s + num(t.amount); }, 0)), 'Across all accounts', '') +
+        kpi('Combined balance', money(accounts.reduce(function (s, a) { return s + (a.status === 'closed' ? 0 : num(a.current_balance)); }, 0)), open.length + ' open accounts', '') +
+      '</div></div>';
+
+    html += '<div class="card"><div class="card-head"><h2>Transfer history</h2></div>';
+    if (!transfers.length) {
+      html += emptyState('No transfers yet',
+        'Move money between your accounts without recording income or expenses.',
+        can('transactions_create') ? '<button class="btn" type="button" data-newtransfer="1">Make a transfer</button>' : '');
+    } else {
+      html += '<div class="table-wrap"><table class="table"><thead><tr>' +
+        '<th>Date</th><th>Reference</th><th>From</th><th>To</th><th>Note</th><th class="r">Amount</th>' +
+        (can('transactions_delete') ? '<th></th>' : '') +
+        '</tr></thead><tbody>';
+      transfers.forEach(function (t) {
+        var from = acctById(t.from_account_id);
+        var to = acctById(t.to_account_id);
+        html += '<tr>' +
+          '<td class="muted small" style="white-space:nowrap">' + esc(fmtDate(t.occurred_on)) + '</td>' +
+          '<td class="mono small">' + esc(t.reference) + '</td>' +
+          '<td>' + esc(from ? from.name : 'Deleted account') + '</td>' +
+          '<td>' + esc(to ? to.name : 'Deleted account') + '</td>' +
+          '<td class="muted small">' + esc(t.note || '—') + '</td>' +
+          '<td class="r amount">' + esc(money(t.amount)) + '</td>' +
+          (can('transactions_delete')
+            ? '<td><div class="row-actions"><button class="icon-btn" type="button" title="Delete" data-del-transfer="' + t.id + '">✕</button></div></td>'
+            : '') +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="card"><h2>Could not load transfers</h2><p class="muted small">' + esc(errMsg(e)) + '</p></div>';
+    toast(errMsg(e), 'err');
+  }
+};
+
+function openTransferModal() {
+  if (!can('transactions_create')) { toast('Your role cannot create transfers.', 'err'); return; }
+  var open = accounts.filter(function (a) { return a.status !== 'closed'; });
+  if (open.length < 2) { toast('Two open accounts are required.', 'err'); return; }
+
+  var opts = open.map(function (a) {
+    return '<option value="' + a.id + '">' + esc(a.name) + ' · ' + esc(money(a.current_balance)) + '</option>';
+  }).join('');
+
+  openModal({
+    title: 'New transfer',
+    body:
+      '<label class="field"><span>From account</span><select class="inp" id="tr-from">' + opts + '</select></label>' +
+      '<label class="field"><span>To account</span><select class="inp" id="tr-to">' + opts + '</select></label>' +
+      '<label class="field"><span>Amount</span><input class="inp" id="tr-amount" type="number" min="0.01" step="0.01" inputmode="decimal" required placeholder="0.00"></label>' +
+      '<label class="field"><span>Date</span><input class="inp" id="tr-date" type="date" required value="' + todayISO() + '"></label>' +
+      '<label class="field"><span>Note</span><input class="inp" id="tr-note" maxlength="140" placeholder="Optional, e.g. top up savings"></label>' +
+      '<label class="field"><span>Reference number</span><input class="inp mono" id="tr-ref" value="' + refNumber() + '" maxlength="40"></label>' +
+      '<p class="muted small" style="margin:0">Both balances update together in a single database transaction. This is not income or an expense.</p>',
+    submitLabel: 'Transfer',
+    onSubmit: async function () {
+      requireSession();
+      var from = $('#tr-from').value;
+      var to = $('#tr-to').value;
+      var amount = Math.round(num($('#tr-amount').value) * 100) / 100;
+      var note = $('#tr-note').value.trim();
+      var date = $('#tr-date').value;
+      var ref = $('#tr-ref').value.trim();
+
+      if (!from || !to) throw new Error('Choose both accounts.');
+      if (from === to) throw new Error('Source and destination must be different accounts.');
+      if (!(amount > 0)) throw new Error('Enter an amount greater than zero.');
+      if (!date) throw new Error('Choose a date.');
+
+      var src = acctById(from);
+      if (src && amount > num(src.current_balance)) {
+        var go = await askConfirm('Insufficient balance',
+          'The source account holds ' + money(src.current_balance) + '. Record the transfer anyway? It will show a negative balance.',
+          'Transfer anyway');
+        if (!go) throw new Error('Transfer cancelled.');
+      }
+
+      var res = await sb.rpc('create_transfer', {
+        p_from: from,
+        p_to: to,
+        p_amount: amount,
+        p_note: note,
+        p_occurred_on: date,
+        p_reference: ref || null
+      });
+      if (res.error) throw res.error;
+
+      playSound('transferConfirmed');
+      toast('Transfer ' + (res.data && res.data.reference ? res.data.reference : '') + ' posted', 'ok');
+      await loadAccounts();
+      refreshCurrent();
+    }
+  });
+
+  /* Default the destination to the second account. */
+  setTimeout(function () {
+    var sel = $('#tr-to');
+    if (sel && sel.options.length > 1) sel.selectedIndex = 1;
+  }, 0);
+}
+
+async function deleteTransfer(id) {
+  if (!can('transactions_delete')) { toast('Your role cannot delete transfers.', 'err'); return; }
+  var t = null;
+  transfers.forEach(function (x) { if (x.id === id) t = x; });
+  var ok = await askConfirm('Delete transfer',
+    'Delete transfer ' + (t ? t.reference : '') + '? Both account balances will be recalculated. This cannot be undone.',
+    'Delete transfer', true);
+  if (!ok) return;
+  try {
+    var res = await sb.from('transfers').delete().eq('id', id);
+    if (res.error) throw res.error;
+    playSound('transferDeleted');
+    toast('Transfer deleted', 'ok');
+    await loadAccounts();
+    refreshCurrent();
+  } catch (e) { toast(errMsg(e), 'err'); }
+}
+
+/* ============================================================
    Profile
    ============================================================ */
 var CURRENCIES = ['USD', 'EUR', 'GBP', 'PHP', 'INR', 'AUD', 'CAD', 'SGD', 'JPY', 'AED', 'NGN', 'ZAR', 'BRL', 'MXN', 'IDR', 'MYR'];
@@ -2372,8 +2861,8 @@ VIEW_LOADERS.profile = async function () {
         '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">User ID</span><span class="mono small">' + esc(user.id.slice(0, 8)) + '…</span></div>' +
         '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Your role</span><span>' + rolePill(me.role) + '</span></div>' +
         '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Row level security</span><span class="badge in">Enabled</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Session persistence</span><span class="badge in">On this device</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Session expires</span><span class="small mono">' + esc(session && session.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : 'auto-refresh') + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Session persistence</span><span class="badge in">Survives refresh</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Access token refreshes at</span><span class="small mono">' + esc(session && session.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : 'auto-refresh') + '</span></div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">' +
           '<button class="btn ghost small" type="button" id="pf-pw">Send password reset email</button>' +
           '<button class="btn ghost small" type="button" id="pf-signout">Sign out</button>' +
@@ -2436,8 +2925,17 @@ async function doSignOut() {
     'Sign out', true
   );
   if (!ok) return;
+
+  /* Stop the refresh timer and drop the tokens first, so nothing can write the
+     session back while we are clearing it. */
+  try { await sb.auth.stopAutoRefresh(); } catch (e) { /* ignore */ }
   try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* ignore */ }
+
   purgeSessionStorage();
+  session = null;
+  user = null;
+  authRestoring = false;
+  authReady = true;
   teardown();
   show('auth');
   setMsg('#auth-msg', 'Signed out. Your session was cleared on this device.', 'ok');
@@ -2885,7 +3383,155 @@ var SCHEMA_SQL = [
 'insert into public.workspace_members (owner_id, user_id, email, display_name, role, status)',
 'select u.id, u.id, coalesce(u.email, \'\'), coalesce(p.full_name, \'\'), \'owner\', \'active\'',
 'from auth.users u left join public.profiles p on p.id = u.id',
-'on conflict (owner_id, email) do nothing;'
+'on conflict (owner_id, email) do nothing;',
+'',
+'/* ============================================================',
+'   STAGE 3 - internal transfers',
+'   ============================================================ */',
+'',
+'create table if not exists public.transfers (',
+'  id uuid primary key default gen_random_uuid(),',
+'  user_id uuid not null references auth.users(id) on delete cascade,',
+'  from_account_id uuid not null references public.bank_accounts(id) on delete restrict,',
+'  to_account_id uuid not null references public.bank_accounts(id) on delete restrict,',
+'  amount numeric(14,2) not null check (amount > 0),',
+'  note text not null default \'\',',
+'  reference text not null,',
+'  occurred_on date not null default current_date,',
+'  created_at timestamptz not null default now(),',
+'  constraint transfers_distinct_accounts check (from_account_id <> to_account_id),',
+'  constraint transfers_reference_uniq unique (user_id, reference)',
+');',
+'',
+'create index if not exists transfers_user_idx on public.transfers (user_id, created_at desc);',
+'create index if not exists transfers_from_idx on public.transfers (from_account_id);',
+'create index if not exists transfers_to_idx on public.transfers (to_account_id);',
+'',
+'alter table public.transfers enable row level security;',
+'',
+'drop policy if exists transfers_select on public.transfers;',
+'create policy transfers_select on public.transfers for select to authenticated',
+'  using (auth.uid() = user_id and public.has_perm(\'transactions_view\'));',
+'drop policy if exists transfers_insert on public.transfers;',
+'create policy transfers_insert on public.transfers for insert to authenticated',
+'  with check (auth.uid() = user_id and public.has_perm(\'transactions_create\'));',
+'drop policy if exists transfers_delete on public.transfers;',
+'create policy transfers_delete on public.transfers for delete to authenticated',
+'  using (auth.uid() = user_id and public.has_perm(\'transactions_delete\'));',
+'',
+'grant select, insert, delete on public.transfers to authenticated;',
+'',
+'/* Transfers move money, so recalc must count them on both sides. */',
+'create or replace function public.recalc_account_balance(p_account_id uuid)',
+'returns void language plpgsql security definer set search_path = public as $$',
+'declare',
+'  v_open numeric(14,2);',
+'  v_income numeric(14,2);',
+'  v_expense numeric(14,2);',
+'  v_out numeric(14,2);',
+'  v_in numeric(14,2);',
+'begin',
+'  if p_account_id is null then return; end if;',
+'  select opening_balance into v_open from public.bank_accounts where id = p_account_id;',
+'  if not found then return; end if;',
+'',
+'  select coalesce(sum(case when type = \'income\' then amount else 0 end), 0),',
+'         coalesce(sum(case when type = \'expense\' then amount else 0 end), 0)',
+'    into v_income, v_expense',
+'  from public.transactions where account_id = p_account_id;',
+'',
+'  select coalesce(sum(case when from_account_id = p_account_id then amount else 0 end), 0),',
+'         coalesce(sum(case when to_account_id = p_account_id then amount else 0 end), 0)',
+'    into v_out, v_in',
+'  from public.transfers',
+'  where from_account_id = p_account_id or to_account_id = p_account_id;',
+'',
+'  update public.bank_accounts',
+'     set current_balance = coalesce(v_open, 0) + v_income - v_expense - v_out + v_in,',
+'         updated_at = now()',
+'   where id = p_account_id;',
+'end $$;',
+'',
+'/* One function, one transaction: both balances move or neither does. */',
+'create or replace function public.create_transfer(',
+'  p_from uuid,',
+'  p_to uuid,',
+'  p_amount numeric,',
+'  p_note text default \'\',',
+'  p_occurred_on date default current_date,',
+'  p_reference text default null',
+')',
+'returns public.transfers language plpgsql security definer set search_path = public as $$',
+'declare',
+'  v_from public.bank_accounts;',
+'  v_to public.bank_accounts;',
+'  v_ref text;',
+'  v_row public.transfers;',
+'begin',
+'  if auth.uid() is null then',
+'    raise exception \'Not authenticated\' using errcode = \'28000\';',
+'  end if;',
+'  if p_from is null or p_to is null then',
+'    raise exception \'Choose a source and a destination account\' using errcode = \'22023\';',
+'  end if;',
+'  if p_from = p_to then',
+'    raise exception \'Source and destination must differ\' using errcode = \'22023\';',
+'  end if;',
+'  if p_amount is null or p_amount <= 0 then',
+'    raise exception \'Transfer amount must be greater than zero\' using errcode = \'22023\';',
+'  end if;',
+'',
+'  select * into v_from from public.bank_accounts where id = p_from and user_id = auth.uid() for update;',
+'  if not found then raise exception \'Source account not found\' using errcode = \'22023\'; end if;',
+'  select * into v_to from public.bank_accounts where id = p_to and user_id = auth.uid() for update;',
+'  if not found then raise exception \'Destination account not found\' using errcode = \'22023\'; end if;',
+'  if v_from.status = \'closed\' or v_to.status = \'closed\' then',
+'    raise exception \'Closed accounts cannot take part in a transfer\' using errcode = \'22023\';',
+'  end if;',
+'',
+'  v_ref := coalesce(nullif(trim(p_reference), \'\'),',
+'    \'TRF-\' || to_char(now(), \'YYYYMMDD\') || \'-\' || upper(substr(replace(gen_random_uuid()::text, \'-\', \'\'), 1, 6)));',
+'',
+'  insert into public.transfers (user_id, from_account_id, to_account_id, amount, note, reference, occurred_on)',
+'  values (auth.uid(), p_from, p_to, p_amount, coalesce(p_note, \'\'), v_ref, coalesce(p_occurred_on, current_date))',
+'  returning * into v_row;',
+'',
+'  perform public.recalc_account_balance(p_from);',
+'  perform public.recalc_account_balance(p_to);',
+'',
+'  return v_row;',
+'exception',
+'  when unique_violation then',
+'    raise exception \'A transfer with that reference already exists\' using errcode = \'23505\';',
+'end $$;',
+'',
+'grant execute on function public.create_transfer(uuid, uuid, numeric, text, date, text) to authenticated;',
+'',
+'/* Removing a transfer puts both balances back. */',
+'create or replace function public.transfers_balance_trigger()',
+'returns trigger language plpgsql security definer set search_path = public as $$',
+'begin',
+'  if tg_op = \'DELETE\' then',
+'    perform public.recalc_account_balance(old.from_account_id);',
+'    perform public.recalc_account_balance(old.to_account_id);',
+'  end if;',
+'  return null;',
+'end $$;',
+'',
+'drop trigger if exists transfers_balance on public.transfers;',
+'create trigger transfers_balance after delete on public.transfers',
+'  for each row execute function public.transfers_balance_trigger();',
+'',
+'create or replace function public.recalc_all_balances()',
+'returns void language plpgsql security definer set search_path = public as $$',
+'declare r record;',
+'begin',
+'  for r in select id from public.bank_accounts where user_id = auth.uid() loop',
+'    perform public.recalc_account_balance(r.id);',
+'  end loop;',
+'end $$;',
+'',
+'grant execute on function public.recalc_all_balances() to authenticated;'
 ].join('\n');
 
 /* The Stage 2 half of the schema, shown on its own in the migration dialog. */
@@ -2988,6 +3634,13 @@ async function handleAuthSubmit(ev) {
     } else {
       var s = await sb.auth.signInWithPassword({ email: email, password: pass });
       if (s.error) throw s.error;
+      /* Write the token pair before the app opens, so an immediate refresh
+         cannot land between sign-in and the save. */
+      if (s.data && s.data.session) {
+        session = s.data.session;
+        user = s.data.session.user;
+        await persistSessionNow(s.data.session);
+      }
     }
     $('#auth-pass').value = '';
   } catch (e) {
@@ -3123,6 +3776,11 @@ function wireEvents() {
     var va = t.closest('[data-acct-view]');
     if (va) { openAccountHistory(va.getAttribute('data-acct-view')); return; }
 
+    var nt2 = t.closest('[data-newtransfer]');
+    if (nt2) { openTransferModal(); return; }
+    var dtf = t.closest('[data-del-transfer]');
+    if (dtf) { deleteTransfer(dtf.getAttribute('data-del-transfer')); return; }
+
     if (t.closest('[data-stage2-sql]')) { openMigrationModal(); return; }
   });
 
@@ -3210,7 +3868,23 @@ function init() {
   $('#auth-form').addEventListener('submit', handleAuthSubmit);
   $('#forgot').addEventListener('click', handleForgot);
 
+  /* Flush the session when the page is hidden or unloaded, so a reload or a
+     tab close right after a token refresh still finds the newest pair. */
+  window.addEventListener('pagehide', function () { if (session) persistSessionNow(session); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && session) persistSessionNow(session);
+  });
+
+  /* Back and forward between #/dashboard and #/transactions must not reload
+     the app or drop the session. */
+  window.addEventListener('hashchange', function () {
+    if (!authReady || !appReady) return;
+    var next = (location.hash || '').replace(/^#\/?/, '');
+    if (TITLES[next] && next !== state.view) showView(next);
+  });
+
   wireEvents();
+  armAudioOnce();
   boot();
 }
 
