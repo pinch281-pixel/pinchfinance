@@ -1,10 +1,22 @@
-# PINCH Finance
+# PINCH Finance - Standard Edition
+
+| | |
+| --- | --- |
+| **Product** | PINCH Finance |
+| **Edition** | Standard Edition |
+| **Version** | Beta 2 (v0.4.1) |
+| **Developer** | PINCH Software |
 
 Personal and small-team finance on Supabase: bank accounts, income, expenses,
-internal transfers, budgets and reports. Beta 2.
+internal transfers, budgets and reports.
 
 Live data lives in Postgres with row level security. There is no mock database
 and no local copy of your financial records.
+
+> **Edition note.** This repository is the Standard Edition. PINCH Finance will
+> also ship as a Business Edition and a Professional Edition; both are planned
+> and not part of this codebase. There is no edition switcher and no Business or
+> Professional code here.
 
 ---
 
@@ -122,6 +134,44 @@ transfer triggers a recalculation, so the numbers cannot drift from the records.
 
 ---
 
+## Overall Money
+
+The dashboard shows **Overall Money**: one figure for everything you own across
+all accounts.
+
+```
+Overall Money = balance of account 1
+              + balance of account 2
+              + balance of account 3
+              + every remaining account balance
+```
+
+It is the sum of `bank_accounts.current_balance`, **not** income minus expenses.
+The two are different numbers, and only one of them is right:
+
+| Figure | Example | Why |
+| --- | --- | --- |
+| Income minus expenses | -345.00 | Ignores opening balances, and treats a transfer as spending |
+| Sum of account balances | 9,255.00 | Matches the account cards, because it is the same data |
+
+Rules the calculation follows:
+
+- Every account you own is included, whatever its type - savings, checking,
+  cash, e-wallet, credit card.
+- Accounts marked **closed** are excluded. Their money has already been moved
+  out, so counting them would double count.
+- Each account id is counted once, so a duplicated row cannot inflate the total.
+- Deleted accounts are gone from the table, so they are gone from the total.
+- A transfer between two of your own accounts moves value from one row to
+  another and leaves the sum unchanged. Transfers are never income or expenses.
+- The figure is recalculated every time the dashboard loads, after every
+  transaction, transfer, account creation, edit or delete.
+
+The helper is `overallMoney()` in `supabase.js`. The dashboard and the Bank
+accounts page both call it, so the two screens can never disagree.
+
+---
+
 ## Roles
 
 | Capability | Owner | Administrator | Editor | Viewer |
@@ -201,5 +251,12 @@ that the WAV filenames match exactly, including uppercase, and sit beside
 
 ## Version
 
-Beta 2 - v0.4.0. The sidebar shows the running version, so you can confirm which
-build the browser actually loaded.
+PINCH Finance - Standard Edition, Beta 2 (v0.4.1). The sidebar shows the edition
+and running version, so you can confirm which build the browser actually loaded.
+
+| | |
+| --- | --- |
+| Product | PINCH Finance |
+| Edition | Standard Edition |
+| Version | Beta 2 (v0.4.1) |
+| Developer | PINCH Software |

@@ -1,7 +1,7 @@
 'use strict';
 
 /* ==========================================================================
-   PINCH Finance - Beta 2 - supabase.js
+   PINCH Finance - Standard Edition - supabase.js
    --------------------------------------------------------------------------
    Flat repository layout: this file sits in the repository root next to
    index.html. No js/ folder, no src/ folder.
@@ -10,6 +10,7 @@
      - the project connection (URL + publishable key)
      - the persistent auth session, so a refresh never logs you out
      - the data access helpers (profiles, categories, accounts, roles, ledgers)
+     - Overall Money, the combined balance of every eligible account
 
    It is loaded before script.js. Nothing here runs on load; the client is
    created by boot(), which script.js calls from its init().
@@ -22,8 +23,6 @@ var CONFIG = {
   anonKey: 'sb_publishable_xLBNR_CmkqklT8dy12AfAQ_Ti-PUNRB'
 };
 
-
-/* ---------- runtime state ---------- */
 var sb = null;
 var session = null;
 var user = null;
@@ -269,6 +268,52 @@ function maskAccount(num) {
   return '•••• ' + s.slice(-4);
 }
 function activeAccounts() { return accounts.filter(function (a) { return a.status !== 'closed'; }); }
+
+/* ------------------------------------------------------------------
+   Overall Money
+   ------------------------------------------------------------------
+   The combined balance of every eligible account the signed-in user owns.
+
+   The source of truth is bank_accounts.current_balance for each account,
+   never income minus expenses. Postgres keeps that column correct: every
+   transaction insert, update or delete and every transfer recalculates the
+   affected accounts, so summing the column cannot drift from the records.
+
+   Rules applied here:
+     - every account row in `accounts` is included, whatever its type
+     - closed (archived) accounts are skipped: their money has already been
+       moved out, so counting them would double count
+     - each account id is counted once, so a duplicated row cannot inflate
+       the total
+     - deleted accounts are absent from the table and therefore absent here
+     - a transfer between two of the user's own accounts moves value from one
+       row to another and leaves the sum unchanged
+   ------------------------------------------------------------------ */
+function overallMoney() {
+  var seen = {}, total = 0, counted = 0, closed = 0, byCurrency = {};
+
+  (accounts || []).forEach(function (a) {
+    if (!a || !a.id) return;
+    if (seen[a.id]) return;              /* no duplicate counting */
+    seen[a.id] = true;
+
+    if (a.status === 'closed') { closed++; return; }
+
+    total += num(a.current_balance);
+    counted++;
+    var c = a.currency || (profile && profile.currency) || 'USD';
+    byCurrency[c] = (byCurrency[c] || 0) + 1;
+  });
+
+  var currencies = Object.keys(byCurrency);
+  return {
+    total: total,
+    counted: counted,
+    closed: closed,
+    currencies: currencies,
+    mixedCurrency: currencies.length > 1
+  };
+}
 
 /* ---------- role + permissions ---------- */
 var stage2Ready = true;

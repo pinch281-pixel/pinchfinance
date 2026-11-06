@@ -1,9 +1,19 @@
-# PINCH Finance - User Guide
+# PINCH Finance - Standard Edition - User Guide
 
-Beta 2. This guide covers day-to-day use. For installation, see `README.md`.
+| | |
+| --- | --- |
+| **Product** | PINCH Finance |
+| **Edition** | Standard Edition |
+| **Version** | Beta 2 (v0.4.1) |
+| **Developer** | PINCH Software |
+
+This guide covers day-to-day use. For installation, see `README.md`.
 
 All files live in one flat folder: `index.html`, `style.css`, `script.js`,
 `supabase.js` and the nine WAV files. Nothing needs a subfolder.
+
+You are using the **Standard Edition**. Business Edition and Professional
+Edition are planned for the future and are not part of this app.
 
 ---
 
@@ -31,15 +41,45 @@ follow the link Supabase emails you.
 
 ## 2. Reading the dashboard
 
-Four figures at the top:
+### Overall money
 
-- **Available balance** - all income minus all expenses, across every account
+The first thing on the dashboard is **Overall money**: one large figure for
+everything you own, added up across all your accounts.
+
+```
+Overall money = account 1 + account 2 + account 3 + all remaining accounts
+```
+
+It is the sum of the actual balances, not income minus expenses. That matters:
+income minus expenses ignores the money each account started with, and it treats
+a transfer between your own accounts as if you had spent it.
+
+Under the figure you see how many accounts were combined, and small pills naming
+each account with its balance. If any account is closed, the line says how many
+were excluded.
+
+Overall money changes when:
+
+- you record income - it goes up by the amount
+- you record an expense - it goes down by the amount
+- you add an account with an opening balance - it goes up by that balance
+- you delete an account - the total drops by that account's balance
+- you close an account - the total drops by that balance
+
+Overall money does **not** change when you transfer money between two of your own
+accounts. The money has only moved, so the combined total stays the same.
+
+### The rest of the dashboard
+
+Four figures below it:
+
 - **Income this month** - with the change against last month
 - **Expenses this month** - with the change against last month
 - **Net this month** - what is left, plus your savings rate
+- **Lifetime net** - all income minus all expenses, ever
 
-Below that: your accounts with live balances, a six-month cash flow chart, this
-month's spending by category, recent activity, and budget progress.
+Then your accounts with live balances, a six-month cash flow chart, this month's
+spending by category, recent activity, and budget progress.
 
 Every figure is calculated from your records. Nothing is typed in twice.
 
@@ -283,6 +323,17 @@ You are never logged out simply for refreshing.
 Because a balance is derived. Editing it would put it out of step with the
 records, and the next recalculation would overwrite your change anyway. Adjust
 the opening balance on the account, or add the missing transaction.
+
+**Why does Overall money differ from income minus expenses?**
+Because they answer different questions. Income minus expenses tells you how
+much you earned and spent in a period. Overall money tells you how much you have
+right now, which includes what each account started with and is unaffected by
+transfers between your own accounts. Overall money is the sum of your account
+balances.
+
+**Does a transfer change Overall money?**
+No. Moving money from savings to checking changes both account balances but not
+their total.
 
 **Why does my transfer not show in income or expenses?**
 It should not. Transfers move money between your own accounts and are excluded

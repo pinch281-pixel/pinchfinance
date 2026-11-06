@@ -1,5 +1,5 @@
 /* ==========================================================================
-   PINCH Finance - Beta 2 - style.css
+   PINCH Finance - Standard Edition - style.css
    Flat repository layout: this file sits in the repository root next to
    index.html. No css/ folder.
    ========================================================================== */
@@ -99,6 +99,18 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 .kpi .sub{font-size:12px;color:var(--muted);margin-top:4px}
 .grid2{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;align-items:start}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+/* ---------- overall money ---------- */
+.om-card{background:linear-gradient(135deg,var(--brand) 0%,#0A6353 55%,#084C40 100%);border-radius:var(--r);padding:24px 26px;margin-bottom:18px;box-shadow:0 2px 4px rgba(11,18,32,.08),0 14px 34px rgba(11,92,76,.22);color:#fff}
+.om-label{font-size:11.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.74)}
+.om-value{font-size:38px;font-weight:700;letter-spacing:-.03em;line-height:1.12;margin-top:6px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.om-value.neg{color:#FFC9C2}
+.om-sub{font-size:12.5px;color:rgba(255,255,255,.8);margin-top:6px}
+.om-split{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.om-pill{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 11px;font-size:12px;color:#fff;max-width:100%}
+.om-pill strong{font-weight:650;font-variant-numeric:tabular-nums}
+.om-pill .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.om-note{font-size:11.5px;color:rgba(255,255,255,.62);margin-top:14px;border-top:1px solid rgba(255,255,255,.16);padding-top:11px}
 /* ---------- table ---------- */
 .table-wrap{overflow-x:auto;margin:0 -18px;padding:0 18px}
 table.table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -211,4 +223,10 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px}
 .topbar h1{font-size:17px}
 .table-wrap{margin:0 -14px;padding:0 14px}
 .budget-row{grid-template-columns:1fr;gap:8px}
+.om-card{padding:20px 18px}
+.om-value{font-size:30px}
+}
+@media(max-width:560px){
+.om-value{font-size:26px}
+.om-pill{font-size:11px}
 }

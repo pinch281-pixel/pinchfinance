@@ -1,7 +1,7 @@
 'use strict';
 
 /* ==========================================================================
-   PINCH Finance - Beta 2 - script.js
+   PINCH Finance - Standard Edition - script.js
    --------------------------------------------------------------------------
    Flat repository layout: this file sits in the repository root next to
    index.html. No js/ folder, no src/ folder.
@@ -11,9 +11,12 @@
    supabase.js and starts the app from init() at the bottom.
    ========================================================================== */
 
-var VERSION = '0.4.0';
+var VERSION = '0.4.1';
 var RELEASE = 'Beta 2';
-var BUILD = 'r140';
+var BUILD = 'r149';
+var EDITION = 'Standard Edition';
+var PRODUCT = 'PINCH Finance';
+var DEVELOPER = 'PINCH Software';
 var CFG_KEY = 'pinch.config';
 var PAGE_SIZE = 25;
 
@@ -194,7 +197,7 @@ function showNetblock(detail) {
         '<p class="muted small">The Jetdraft artifact runtime blocks network requests to endpoints outside its own artifact API, so the browser cannot open a connection to <code>zfhosceosdowhbilnoao.supabase.co</code>. This is a sandbox restriction, not a credential or database problem: the project URL and publishable key are valid and the tables and RLS policies are in place.</p>' +
         '<p class="muted small">Run the app outside the sandbox. Download the standalone file and open it in a normal browser tab, or host it anywhere static. Supabase accepts requests from any origin, so it will connect immediately.</p>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px">' +
-          '<button class="btn" type="button" id="nb-download">Download index.html</button>' +
+          '<button class="btn" type="button" id="nb-download">Download standalone app</button>' +
           '<button class="btn ghost" type="button" id="nb-retry">Retry connection</button>' +
           '<button class="btn ghost" type="button" id="nb-change">Change project</button>' +
         '</div>' +
@@ -208,11 +211,11 @@ function showNetblock(detail) {
         var blob = new Blob([ORIGINAL_HTML], { type: 'text/html;charset=utf-8' });
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'index.html';
+        a.download = 'pinch-finance-0.1.0.html';
         document.body.appendChild(a);
         a.click();
         setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 400);
-        setMsg('#nb-msg', 'Downloaded. Keep style.css, script.js, supabase.js and the WAV files in the same folder, then open index.html in a browser tab.', 'ok');
+        setMsg('#nb-msg', 'Downloaded. Open the file in a browser tab to use the app.', 'ok');
       } catch (err) {
         setMsg('#nb-msg', 'Download blocked by the sandbox. Ask for the exported file link instead.', 'err');
       }
@@ -286,7 +289,7 @@ function renderShell() {
     badge.textContent = roleLabel(me.role);
   }
   var sub = $('#side-build');
-  if (sub) sub.textContent = 'Finance · ' + RELEASE + ' · v' + VERSION;
+  if (sub) sub.textContent = EDITION + ' · ' + RELEASE + ' · v' + VERSION;
 }
 
 function setMsg(sel, text, kind) {
@@ -407,6 +410,10 @@ VIEW_LOADERS.dashboard = async function () {
     var lifetimeFrom = '1900-01-01';
     var lifetimeTo = '2999-12-31';
 
+    /* Re-read the accounts first: Overall Money is the sum of their stored
+       balances, so it must not use a stale copy from page load. */
+    try { await loadAccounts(); } catch (e) { /* keep the cached list */ }
+
     var res = await Promise.all([
       fetchRange(from6, to6, 'all'),
       fetchRange(lifetimeFrom, lifetimeTo, 'all'),
@@ -455,8 +462,38 @@ VIEW_LOADERS.dashboard = async function () {
     if (bres.error) throw bres.error;
     var budgets = bres.data || [];
 
+    /* Overall Money: the sum of the stored balance of every eligible account.
+       Not income minus expenses - that figure ignores opening balances and
+       transfers, and would disagree with the account cards. */
+    var om = overallMoney();
+
+    var omSub;
+    if (!om.counted) {
+      omSub = 'No accounts yet';
+    } else {
+      omSub = om.counted + (om.counted === 1 ? ' account' : ' accounts') + ' combined';
+      if (om.closed) omSub += ' · ' + om.closed + ' closed excluded';
+      if (om.mixedCurrency) omSub += ' · mixed currencies';
+    }
+
+    var omCard =
+      '<div class="om-card">' +
+        '<div class="om-label">Overall money</div>' +
+        '<div class="om-value ' + (om.total < 0 ? 'neg' : '') + '">' + esc(money(om.total)) + '</div>' +
+        '<div class="om-sub">' + esc(omSub) + '</div>' +
+        (om.counted
+          ? '<div class="om-split">' +
+              accounts.filter(function (a) { return a.status !== 'closed'; }).slice(0, 4).map(function (a) {
+                return '<span class="om-pill"><span class="dot" style="background:' + catColor({ name: a.name }) + '"></span>' +
+                  esc(a.name) + ' · <strong>' + esc(money(a.current_balance)) + '</strong></span>';
+              }).join('') +
+            '</div>'
+          : '') +
+        '<div class="om-note">Sum of every account balance. Transfers between your own accounts leave this total unchanged.</div>' +
+      '</div>';
+
     /* Accounts summary */
-    var acctTotal = accounts.reduce(function (s, a) { return s + (a.status === 'closed' ? 0 : num(a.current_balance)); }, 0);
+    var acctTotal = om.total;
     var acctCards = '';
     if (can('accounts_view') && accounts.length) {
       acctCards = '<div class="card"><div class="card-head"><h2>Accounts</h2><div class="spacer"></div>' +
@@ -464,13 +501,13 @@ VIEW_LOADERS.dashboard = async function () {
         '<button class="btn ghost small" type="button" data-goto="accounts">Manage</button></div>' +
         '<div class="acct-grid" style="margin-bottom:0">' +
         accounts.slice(0, 3).map(function (a) {
-          return '<div class="acct-card type-' + acctTypeClass(a.account_type) + '">' +
+          return '<div class="acct-card type-' + acctTypeClass(a.account_type) + (a.status === 'closed' ? ' is-archived' : '') + '">' +
             '<div class="acct-top"><div style="flex:1;min-width:0"><div class="acct-name">' + esc(a.name) + '</div>' +
             '<div class="acct-bank">' + esc(acctTypeLabel(a.account_type)) + ' · ' + esc(a.currency) + '</div></div></div>' +
             '<div class="acct-balance ' + (num(a.current_balance) < 0 ? 'neg' : '') + '">' + esc(money(a.current_balance)) + '</div>' +
             '</div>';
         }).join('') + '</div>' +
-        (accounts.length > 3 ? '<p class="muted small" style="margin:10px 0 0">Showing 3 of ' + accounts.length + ' accounts · total ' + esc(money(acctTotal)) + '</p>' : '') +
+        (accounts.length > 3 ? '<p class="muted small" style="margin:10px 0 0">Showing 3 of ' + accounts.length + ' accounts · overall ' + esc(money(acctTotal)) + '</p>' : '') +
         '</div>';
     } else if (can('accounts_view')) {
       acctCards = '<div class="card"><div class="card-head"><h2>Accounts</h2></div>' +
@@ -480,11 +517,13 @@ VIEW_LOADERS.dashboard = async function () {
 
     var html = '';
 
+    html += omCard;
+
     html += '<div class="kpis">' +
-      kpi('Available balance', money(life.net), 'Income ' + money(life.income) + ' − expenses ' + money(life.expense), life.net >= 0 ? 'pos' : 'neg') +
       kpi('Income · ' + monthLabel(thisMonth, true), money(cur.income), delta(cur.income, prev.income), 'pos') +
       kpi('Expenses · ' + monthLabel(thisMonth, true), money(cur.expense), delta(cur.expense, prev.expense, true), 'neg') +
       kpi('Net this month', money(cur.net), 'Savings rate ' + (isFinite(savings) ? savings.toFixed(0) : '0') + '%', cur.net >= 0 ? 'pos' : 'neg') +
+      kpi('Lifetime net', money(life.net), 'Income ' + money(life.income) + ' − expenses ' + money(life.expense), life.net >= 0 ? 'pos' : 'neg') +
       '</div>';
 
     html += acctCards;
@@ -1482,7 +1521,9 @@ VIEW_LOADERS.accounts = async function () {
   el.innerHTML = loadingCard('Loading accounts…');
   try {
     await loadAccounts();
-    var total = accounts.reduce(function (s, a) { return s + (a.status === 'closed' ? 0 : num(a.current_balance)); }, 0);
+    /* Same helper the dashboard uses, so both screens always agree. */
+    var om = overallMoney();
+    var total = om.total;
     var byType = {};
     accounts.forEach(function (a) {
       var k = acctTypeLabel(a.account_type);
@@ -1506,11 +1547,24 @@ VIEW_LOADERS.accounts = async function () {
       html += '<div class="notice"><div>Your role can view accounts but not create, edit or delete them. Balances are read-only.</div></div>';
     }
 
+    html += '<div class="om-card" style="margin-bottom:18px">' +
+      '<div class="om-label">Overall money</div>' +
+      '<div class="om-value ' + (om.total < 0 ? 'neg' : '') + '">' + esc(money(om.total)) + '</div>' +
+      '<div class="om-sub">' + esc(
+        om.counted
+          ? om.counted + (om.counted === 1 ? ' account' : ' accounts') + ' combined' +
+            (om.closed ? ' · ' + om.closed + ' closed excluded' : '') +
+            (om.mixedCurrency ? ' · mixed currencies' : '')
+          : 'No accounts yet'
+      ) + '</div>' +
+      '<div class="om-note">Sum of every account balance. Transfers between your own accounts leave this total unchanged.</div>' +
+      '</div>';
+
     html += '<div class="kpis">' +
-      kpi('Total balance', money(total), accounts.length + ' accounts', total >= 0 ? 'pos' : 'neg') +
       kpi('Active accounts', String(activeAccounts().length), Object.keys(byType).length + ' account types in use', '') +
       kpi('Largest balance', money(accounts.reduce(function (m, a) { return Math.max(m, num(a.current_balance)); }, 0)), 'Across all accounts', '') +
-      kpi('Closed accounts', String(accounts.filter(function (a) { return a.status === 'closed'; }).length), 'Excluded from totals', '') +
+      kpi('Closed accounts', String(om.closed), 'Excluded from overall money', '') +
+      kpi('Opening balances', money(accounts.reduce(function (s, a) { return s + (a.status === 'closed' ? 0 : num(a.opening_balance)); }, 0)), 'Before transactions and transfers', '') +
       '</div>';
 
     if (!accounts.length) {
@@ -2071,7 +2125,7 @@ VIEW_LOADERS.profile = async function () {
           '<button class="btn ghost small" type="button" id="pf-signout">Sign out</button>' +
           '<button class="btn danger small" type="button" id="pf-disconnect">Change Supabase project</button>' +
         '</div>' +
-        '<p class="muted small" style="margin-top:14px">PINCH Finance Beta ' + esc(VERSION) + ' (' + esc(BUILD) + '). Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.</p>' +
+        '<p class="muted small" style="margin-top:14px">' + esc(PRODUCT) + ' ' + esc(EDITION) + ' · v' + esc(VERSION) + ' ' + esc(RELEASE) + ' (' + esc(BUILD) + ') · Developed by ' + esc(DEVELOPER) + '. Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.</p>' +
       '</div></div>';
     el.innerHTML = html;
 
@@ -2161,7 +2215,7 @@ async function resetConnection() {
    Required database schema (shown on the setup screen)
    ============================================================ */
 var SCHEMA_SQL = [
-'-- PINCH Finance Beta 2 - Supabase schema (stage 1)',
+'-- PINCH Finance Standard Edition - Supabase schema (stage 1)',
 '-- Run once in Supabase > SQL Editor, then reload the app.',
 '',
 'create extension if not exists pgcrypto;',
