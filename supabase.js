@@ -9,7 +9,7 @@
    This file owns everything that talks to Supabase:
      - the project connection (URL + publishable key)
      - the persistent auth session, so a refresh never logs you out
-     - the data access helpers (profiles, categories, accounts, roles, ledgers)
+     - the data access helpers (profiles, categories, accounts, ledgers)
      - Overall Money, the combined balance of every eligible account
 
    It is loaded before script.js. Nothing here runs on load; the client is
@@ -350,20 +350,8 @@ async function loadRole() {
   return me.role;
 }
 
-async function loadMembers() {
-  if (!can('users_manage')) { members = []; return members; }
-  try {
-    var res = await sb.from('workspace_members')
-      .select('id,user_id,email,display_name,role,status,created_at')
-      .order('created_at', { ascending: true });
-    if (res.error) throw res.error;
-    members = res.data || [];
-  } catch (e) {
-    if (!isMissingTable(e)) throw e;
-    members = [];
-  }
-  return members;
-}
+/* The Standard Edition is single-user per account: there is no team roster,
+   so no member list is loaded or displayed. */
 function catById(id) {
   for (var i = 0; i < cats.length; i++) if (cats[i].id === id) return cats[i];
   return null;

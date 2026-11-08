@@ -3,6 +3,9 @@
    Flat repository layout: this file sits in the repository root next to
    index.html. No css/ folder.
 
+   Type pairing: Poppins for display (brand, headings, figures),
+   Inter for working text (body, tables, forms, buttons).
+
    Created and owned by James Carlo H. Cadayona.
    Developed under PINCH Software.
    ========================================================================== */
@@ -13,10 +16,13 @@
 --line:#E4E8EF;--line2:#EFF2F6;--brand:#0E7C66;--brand600:#0B6B58;--brandSoft:#E7F4F0;
 --pos:#0F7B4F;--neg:#B3261E;--side:#0B1220;--side2:#152036;--sideInk:#A9B7CC;
 --r:14px;--rSm:10px;--shadow:0 1px 2px rgba(11,18,32,.05),0 10px 28px rgba(11,18,32,.06);
---font:"Poppins",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+--font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--fontDisplay:"Poppins","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
 html,body{margin:0;padding:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
-h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-.01em}
+/* Poppins carries the display voice - headings, brand, large figures.
+   Inter carries the working voice - body copy, tables, forms, buttons. */
+h1,h2,h3,h4{margin:0;font-family:var(--fontDisplay);font-weight:600;letter-spacing:-.015em}
 h1{font-size:22px}h2{font-size:16px}h3{font-size:15px}
 button{font-family:inherit;cursor:pointer}
 .hidden{display:none!important}
@@ -118,6 +124,17 @@ select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xm
 .credits{margin-top:18px;padding-top:14px;border-top:1px solid var(--line2);font-size:11.5px;line-height:1.6;color:var(--muted)}
 .credits strong{color:var(--ink2);font-weight:600}
 .side-credit{font-size:10.5px;line-height:1.5;color:#5E6E86;padding:10px 6px 0;border-top:1px solid #1D2A40}
+
+/* ---------- typography pairing ----------
+   Poppins: brand, headings, figures, labels - the display voice.
+   Inter: everything that is read as text or data - the working voice. */
+.brand-mark,.side-title,.auth-card h1,.card-head h2,.om-value,.om-label,
+.kpi .value,.kpi .label,.acct-balance,.acct-name,.donut-val,.modal-head h3{
+  font-family:var(--fontDisplay)}
+.kpi .label,.om-label{letter-spacing:.06em}
+.kpi .value,.om-value,.acct-balance,.donut-val{letter-spacing:-.02em}
+.table th,.table td,.badge,.btn,.inp,.nav-item,.muted,.small,.hint,.field>span{
+  font-family:var(--font)}
 /* ---------- table ---------- */
 .table-wrap{overflow-x:auto;margin:0 -18px;padding:0 18px}
 table.table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -168,10 +185,21 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px}
 .overlay{position:fixed;inset:0;background:rgba(11,18,32,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:100;overflow:auto;animation:fade .15s ease}
 .modal{background:var(--surface);border-radius:16px;width:100%;max-width:460px;box-shadow:0 24px 60px rgba(11,18,32,.28);overflow:hidden}
 .modal.wide{max-width:560px}
+.modal.xwide{max-width:820px}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line2)}
 .modal-body{padding:18px}
 .modal-body .inp{background:var(--surface)}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid var(--line2);background:var(--surface2)}
+/* ---------- account ledger ---------- */
+.ledger-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 14px}
+.ledger-sum>div{background:var(--surface2);border:1px solid var(--line);border-radius:var(--rSm);padding:10px 12px}
+.ledger-sum .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;font-family:var(--font)}
+.ledger-sum .v{font-size:15px;font-weight:650;margin-top:3px;font-family:var(--fontDisplay);font-variant-numeric:tabular-nums}
+.ledger-head{display:flex;align-items:center;gap:8px;margin:18px 0 10px;flex-wrap:wrap}
+.ledger-head h3{margin:0}
+.ledger-head .spacer{flex:1}
+.ledger-empty{padding:22px 14px;text-align:center;background:var(--surface2);border:1px dashed var(--line);border-radius:var(--rSm)}
+.ledger-empty p{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
 .form-err{color:var(--neg);font-size:12.5px;margin:8px 0 0;min-height:16px}
 /* ---------- toast ---------- */
 .toast-root{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:200}

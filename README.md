@@ -11,8 +11,8 @@
 > **Created and owned by James Carlo H. Cadayona**
 > **Developed under PINCH Software.**
 
-Personal and small-team finance on Supabase: bank accounts, income, expenses,
-internal transfers, budgets and reports.
+Personal finance on Supabase: bank accounts, income, expenses, internal
+transfers, budgets and reports.
 
 Live data lives in Postgres with row level security. There is no mock database
 and no local copy of your financial records.
@@ -58,9 +58,13 @@ relative to the root, so `index.html` loads `style.css`, `script.js`,
 | --- | --- |
 | `index.html` | Page markup only. Links the stylesheet and both scripts. |
 | `style.css` | All styling. Single stylesheet, no imports. |
-| `script.js` | Interface: helpers, roles and permissions, router, views, modals, sound effects. |
-| `supabase.js` | Everything that talks to Supabase: connection, persistent auth session, data access. |
+| `script.js` | Interface: helpers, roles, router, every view (including the account ledger), modals, sound effects. |
+| `supabase.js` | Everything that talks to Supabase: connection, persistent auth session, data access, Overall Money. |
 | `*.WAV` | The nine sound cues, referenced by bare filename. |
+
+Typography pairs two Google Fonts: **Poppins** for display (brand, headings,
+figures, KPI labels) and **Inter** for working text (body copy, tables, forms,
+buttons). Both load from `fonts.googleapis.com` in `index.html`.
 
 Load order in `index.html` matters and is already correct:
 
@@ -125,157 +129,13 @@ python3 -m http.server 8000
 
 ## Features
 
-- **Bank accounts** - create, edit, delete; opening balance, live balance, per-account transaction history
+- **Bank accounts** - create, edit, delete; opening balance, live balance, and a per-account ledger (**View account history**) that lists that account's own income and expenses and lets you add, edit or delete transactions from inside it
 - **Income and expenses** - account, category, amount, date, description; edit and delete
 - **Internal transfers** - between your own accounts, with reference number and notes, posted atomically
 - **Categories and budgets** - monthly limits per expense category
 - **Reports** - monthly and yearly summaries, category breakdown, CSV export
-- **Team and roles** - owner, administrator, editor, viewer; enforced in the UI and again by RLS
+- **Overall Money** - the combined balance of every eligible account, on the dashboard
 - **Sound effects** - nine cues, played only after a successful action
 
 Balances are computed in Postgres, not in the browser. Every transaction and
 transfer triggers a recalculation, so the numbers cannot drift from the records.
-
----
-
-## Overall Money
-
-The dashboard shows **Overall Money**: one figure for everything you own across
-all accounts.
-
-```
-Overall Money = balance of account 1
-              + balance of account 2
-              + balance of account 3
-              + every remaining account balance
-```
-
-It is the sum of `bank_accounts.current_balance`, **not** income minus expenses.
-The two are different numbers, and only one of them is right:
-
-| Figure | Example | Why |
-| --- | --- | --- |
-| Income minus expenses | -345.00 | Ignores opening balances, and treats a transfer as spending |
-| Sum of account balances | 9,255.00 | Matches the account cards, because it is the same data |
-
-Rules the calculation follows:
-
-- Every account you own is included, whatever its type - savings, checking,
-  cash, e-wallet, credit card.
-- Accounts marked **closed** are excluded. Their money has already been moved
-  out, so counting them would double count.
-- Each account id is counted once, so a duplicated row cannot inflate the total.
-- Deleted accounts are gone from the table, so they are gone from the total.
-- A transfer between two of your own accounts moves value from one row to
-  another and leaves the sum unchanged. Transfers are never income or expenses.
-- The figure is recalculated every time the dashboard loads, after every
-  transaction, transfer, account creation, edit or delete.
-
-The helper is `overallMoney()` in `supabase.js`. The dashboard and the Bank
-accounts page both call it, so the two screens can never disagree.
-
----
-
-## User role policy
-
-Every registered account holds the same application role: **Standard User**.
-
-That includes the software owner's personal account. Ownership is attribution
-only and carries no extra financial privileges:
-
-- No account has a special administrator role.
-- No account can read another account's financial records. Every table is
-  protected by RLS policies scoped to `auth.uid()`, so a query can only ever
-  return the signed-in user's own rows.
-- The owner's login sees exactly the same screens and the same data boundary as
-  any other account.
-
-## Roles
-
-| Capability | Owner | Administrator | Editor | Viewer |
-| --- | :-: | :-: | :-: | :-: |
-| View dashboard, transactions, accounts, reports | yes | yes | yes | yes |
-| Create and edit transactions | yes | yes | yes | no |
-| Delete transactions | yes | yes | no | no |
-| Create and edit accounts | yes | yes | yes | no |
-| Delete accounts | yes | yes | no | no |
-| Manage budgets | yes | yes | no | no |
-| Manage users and roles | yes | yes | no | no |
-
-The interface hides what a role cannot do, and Postgres refuses it anyway.
-Hiding a button is convenience; the RLS policy is the actual control.
-
----
-
-## Security notes
-
-- Every table has row level security enabled and policies scoped to `auth.uid()`.
-- The browser never holds a service-role key.
-- Only the session token pair is stored client side, in the app's own key-value
-  store. No financial record is ever cached there.
-- Account numbers are masked to the last four digits in the interface.
-
----
-
-## Sound effects
-
-| File | Cue | When it plays |
-| --- | --- | --- |
-| `LAUNCH.WAV` | appLaunch, signIn | App opens, sign-in succeeds |
-| `CASHPLS.WAV` | incomeSaved | Income recorded |
-| `CASHMIN.WAV` | expenseSaved | Expense recorded |
-| `CALCULAT.WAV` | transferPosted | Transfer posted |
-| `MOVEFORW.WAV` | transferConfirmed | Transfer confirmed |
-| `MOVEBACK.WAV` | transactionDeleted, accountDeleted, transferDeleted | Record deleted |
-| `CONGRATS.WAV` | accountCreated | Account created |
-| `SMARFILL.WAV` | budgetSaved | Budget saved |
-| `ROLLOVER.WAV` | periodChanged | Reporting period changed |
-
-Sounds play only after the database confirms the write. Audio is unlocked on
-the first click, as browsers require, and each cue stops its own previous voice
-so nothing overlaps. A missing WAV file disables that cue silently - it never
-breaks a database operation.
-
----
-
-## Browser support
-
-Current Chrome, Edge, Firefox and Safari. Requires JavaScript and `fetch`.
-Session persistence needs the app's key-value store, which is present when the
-app is served normally over http or https.
-
----
-
-## Troubleshooting
-
-**Stuck on the connection screen** - `CONFIG` is empty and nothing was saved.
-Fill in the URL and publishable key, or use the on-screen form.
-
-**"Database schema missing"** - the migrations have not run, or ran out of
-order. Run stage 2, then stage 3.
-
-**Signed out on every refresh** - the browser is blocking the app's key-value
-store, usually private mode with storage disabled. Serve the app over `http://`
-or `https://` rather than `file://`.
-
-**Transfers tab says the tables are missing** - `pinch-stage3-migration.sql`
-has not been applied.
-
-**No sound** - the first click unlocks audio. If nothing plays after that, check
-that the WAV filenames match exactly, including uppercase, and sit beside
-`index.html`.
-
----
-
-## Version
-
-PINCH Finance - Standard Edition, Beta 2 (v0.4.1). The sidebar shows the edition
-and running version, so you can confirm which build the browser actually loaded.
-
-| | |
-| --- | --- |
-| Product | PINCH Finance |
-| Edition | Standard Edition |
-| Version | Beta 2 (v0.4.1) |
-| Software owner and creator | James Carlo H. Cadayona |
-| Software developer / brand | PINCH Software |

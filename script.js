@@ -7,8 +7,8 @@
    index.html. No js/ folder, no src/ folder.
 
    This file owns the interface: helpers, roles and permissions, the router,
-   every view, the modals and the sound effects. It is loaded after
-   supabase.js and starts the app from init() at the bottom.
+   every view (including the account ledger), the modals and the sound effects.
+   It is loaded after supabase.js and starts the app from init() at the bottom.
 
    Created and owned by James Carlo H. Cadayona.
    Developed under PINCH Software.
@@ -16,7 +16,7 @@
 
 var VERSION = '0.4.1';
 var RELEASE = 'Beta 2';
-var BUILD = 'r170';
+var BUILD = 'r188';
 var EDITION = 'Standard Edition';
 var PRODUCT = 'PINCH Finance';
 var DEVELOPER = 'PINCH Software';
@@ -91,7 +91,7 @@ var PALETTE = ['#0E7C66', '#2563EB', '#D97706', '#DC2626', '#7C3AED', '#0891B2',
 var TITLES = {
   dashboard: 'Dashboard', transactions: 'Transactions', income: 'Income', expenses: 'Expenses',
   accounts: 'Bank accounts', transfers: 'Transfers', categories: 'Categories', budgets: 'Budgets',
-  reports: 'Reports', team: 'Team', profile: 'Profile'
+  reports: 'Reports', profile: 'Profile'
 };
 
 /* ---------- role-based access control ----------
@@ -141,14 +141,14 @@ function applyNavVisibility() {
     dashboard: 'dashboard_view', transactions: 'transactions_view', income: 'transactions_view',
     expenses: 'transactions_view', accounts: 'accounts_view', transfers: 'transactions_view',
     categories: 'transactions_view', budgets: 'budgets_manage', reports: 'reports_view',
-    team: 'users_manage', profile: null
+    profile: null
   };
   $$('.nav-item').forEach(function (b) {
     var view = b.getAttribute('data-view');
     var need = map[view];
     var hidden = !!(need && !can(need));
-    /* Accounts, Transfers and Team need the Stage 2 tables to exist. */
-    if (!stage2Ready && (view === 'accounts' || view === 'transfers' || view === 'team')) hidden = true;
+    /* Accounts and Transfers need the Stage 2 tables to exist. */
+    if (!stage2Ready && (view === 'accounts' || view === 'transfers')) hidden = true;
     b.classList.toggle('hidden', hidden);
   });
   var quick = $('#quick-add');
@@ -269,7 +269,7 @@ async function enterApp() {
   var hash = (location.hash || '').replace(/^#\/?/, '');
   var allowed = TITLES[hash] &&
     !(hash === 'accounts' && (!can('accounts_view') || !stage2Ready)) &&
-    !(hash === 'team' && (!can('users_manage') || !stage2Ready));
+    !(hash === 'transfers' && !stage2Ready);
   showView(allowed ? hash : 'dashboard');
 }
 
@@ -323,7 +323,7 @@ function showView(name) {
   var gate = {
     dashboard: 'dashboard_view', transactions: 'transactions_view', income: 'transactions_view',
     expenses: 'transactions_view', accounts: 'accounts_view', categories: 'transactions_view',
-    budgets: 'budgets_manage', reports: 'reports_view', team: 'users_manage'
+    budgets: 'budgets_manage', reports: 'reports_view'
   };
   if (gate[name] && !can(gate[name])) {
     var el = document.getElementById('view-' + name);
@@ -874,11 +874,14 @@ function accountOptions(selected) {
   return html;
 }
 
-function openTxModal(existing, presetType) {
+function openTxModal(existing, presetType, presetAccountId) {
   if (!existing && !can('transactions_create')) { toast('Your role cannot create transactions.', 'err'); return; }
   if (existing && !can('transactions_edit')) { toast('Your role cannot edit transactions.', 'err'); return; }
   var isEdit = !!existing;
   var type = existing ? existing.type : (presetType === 'income' ? 'income' : presetType === 'expenses' ? 'expense' : 'expense');
+  /* presetAccountId lets the account ledger post straight into the account
+     the user is already looking at. */
+  var accountSel = existing ? existing.account_id : (presetAccountId || null);
   var body =
     '<label class="field"><span>Type</span><select class="inp" id="tx-type">' +
       '<option value="income"' + (type === 'income' ? ' selected' : '') + '>Income</option>' +
@@ -886,7 +889,7 @@ function openTxModal(existing, presetType) {
     '</select></label>' +
     '<label class="field"><span>Amount</span><input class="inp" id="tx-amount" type="number" min="0.01" step="0.01" inputmode="decimal" required value="' + (existing ? esc(existing.amount) : '') + '" placeholder="0.00"></label>' +
     '<label class="field"><span>Date</span><input class="inp" id="tx-date" type="date" required value="' + esc(existing ? String(existing.occurred_on).slice(0, 10) : todayISO()) + '"></label>' +
-    (stage2Ready ? '<label class="field"><span>Account</span><select class="inp" id="tx-acct">' + accountOptions(existing ? existing.account_id : null) + '</select></label>' : '') +
+    (stage2Ready ? '<label class="field"><span>Account</span><select class="inp" id="tx-acct">' + accountOptions(accountSel) + '</select></label>' : '') +
     '<label class="field"><span>Category</span><select class="inp" id="tx-cat">' + catOptions(type, existing ? existing.category_id : null) + '</select></label>' +
     '<label class="field"><span>Description</span><input class="inp" id="tx-desc" maxlength="160" placeholder="e.g. Monthly rent" value="' + esc(existing ? existing.description : '') + '"></label>';
 
@@ -923,6 +926,9 @@ function openTxModal(existing, presetType) {
       await loadAccounts();
       playSound(t === 'income' ? 'incomeSaved' : 'expenseSaved');
       toast(isEdit ? 'Transaction updated' : 'Transaction added', 'ok');
+      /* If the account ledger is open behind this dialog, refresh it in place
+         so the new row and the new balance appear immediately. */
+      if (ledgerAccountId && $('#acct-detail')) { renderAccountLedger(); }
       refreshCurrent();
     }
   });
@@ -933,6 +939,33 @@ function openTxModal(existing, presetType) {
     var keep = catById(cur);
     $('#tx-cat').innerHTML = catOptions(t, keep && keep.type === t ? cur : null);
   });
+}
+
+/* Open the transaction editor for a row shown in the account ledger. */
+function openTxModalById(id) {
+  if (!ledgerAccountId) return;
+  sb.from('transactions')
+    .select('id,type,amount,description,occurred_on,category_id,account_id')
+    .eq('id', id).maybeSingle()
+    .then(function (res) {
+      if (res.error || !res.data) { toast('Could not open that transaction.', 'err'); return; }
+      openTxModal(res.data, null, ledgerAccountId);
+    }, function () { toast('Could not open that transaction.', 'err'); });
+}
+
+/* Delete a row from the account ledger, then redraw the list. */
+async function ledgerDeleteTransaction(id) {
+  var ok = await askConfirm('Delete transaction', 'Delete this transaction? The account balance will adjust. This cannot be undone.', 'Delete', true);
+  if (!ok) return;
+  try {
+    var res = await sb.from('transactions').delete().eq('id', id);
+    if (res.error) throw res.error;
+    await loadAccounts();
+    playSound('transactionDeleted');
+    toast('Transaction deleted', 'ok');
+    if (ledgerAccountId && $('#acct-detail')) renderAccountLedger();
+    refreshCurrent();
+  } catch (e) { toast(errMsg(e), 'err'); }
 }
 
 async function deleteTransaction(id) {
@@ -1714,200 +1747,132 @@ async function deleteAccount(id) {
   } catch (e) { toast(errMsg(e), 'err'); }
 }
 
-async function openAccountHistory(id) {
+/* ============================================================
+   Account ledger (View account history)
+   ------------------------------------------------------------
+   A wide panel showing one account's own income and expense history,
+   with a button to post another transaction straight into that account.
+   The list is re-read from Postgres after every write, so the amounts
+   always agree with the account balance.
+   ============================================================ */
+var ledgerAccountId = null;
+
+function openAccountHistory(id) {
   var a = acctById(id);
   if (!a) return;
+  ledgerAccountId = id;
+
   var root = $('#modal-root');
-  root.innerHTML = '<div class="overlay" data-acct-overlay="1"><div class="modal wide" role="dialog" aria-modal="true">' +
+  root.innerHTML = '<div class="overlay" data-acct-overlay="1"><div class="modal xwide" role="dialog" aria-modal="true">' +
     '<div class="modal-head"><h3>' + esc(a.name) + '</h3>' +
     '<button class="icon-btn" type="button" data-close="1" aria-label="Close">✕</button></div>' +
     '<div class="modal-body" id="acct-detail"><div class="center-screen" style="min-height:120px;padding:0"><div class="spinner"></div></div></div>' +
     '<div class="modal-foot"><button class="btn ghost" type="button" data-close="1">Close</button></div></div></div>';
   $('[data-acct-overlay]').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
 
+  renderAccountLedger();
+}
+
+async function renderAccountLedger() {
+  var id = ledgerAccountId;
+  var host = $('#acct-detail');
+  if (!id || !host) return;
+
+  /* Re-read the account so the figures reflect any write that just happened. */
+  try { await loadAccounts(); } catch (e) { /* keep the cached copy */ }
+  var a = acctById(id);
+  if (!a) { host.innerHTML = '<p class="muted small" style="margin:0">This account no longer exists.</p>'; return; }
+
+  var head = $('.modal-head h3');
+  if (head) head.textContent = a.name;
+
   try {
     var res = await sb.from('transactions')
-      .select('id,type,amount,description,occurred_on,category_id')
+      .select('id,type,amount,description,occurred_on,category_id,created_at')
       .eq('account_id', id)
-      .order('occurred_on', { ascending: false }).order('created_at', { ascending: false })
-      .limit(50);
+      .order('occurred_on', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(200);
     if (res.error) throw res.error;
     var rows = res.data || [];
     var t = totals(rows);
-    var html = '<dl class="kv">' +
+
+    var html = '';
+
+    /* Balance strip: what the account started with, what moved, where it is now. */
+    html += '<div class="ledger-sum">' +
+      '<div><div class="k">Opening</div><div class="v">' + esc(money(a.opening_balance)) + '</div></div>' +
+      '<div><div class="k">In / Out</div><div class="v">' +
+        '<span class="pos">+' + esc(money(t.income)) + '</span> · ' +
+        '<span class="neg">−' + esc(money(t.expense)) + '</span></div></div>' +
+      '<div><div class="k">Current balance</div><div class="v ' + (num(a.current_balance) < 0 ? 'neg' : '') + '">' +
+        esc(money(a.current_balance)) + '</div></div>' +
+      '</div>';
+
+    /* Account facts. */
+    html += '<dl class="kv" style="margin-bottom:4px">' +
       '<dt>Institution</dt><dd>' + esc(a.institution || '—') + '</dd>' +
       '<dt>Type</dt><dd>' + esc(acctTypeLabel(a.account_type)) + '</dd>' +
       '<dt>Account number</dt><dd class="mono">' + esc(maskAccount(a.account_number)) + '</dd>' +
-      '<dt>Opening balance</dt><dd>' + esc(money(a.opening_balance)) + '</dd>' +
-      '<dt>Current balance</dt><dd class="' + (num(a.current_balance) < 0 ? 'neg' : 'pos') + '">' + esc(money(a.current_balance)) + '</dd>' +
       '<dt>Currency</dt><dd>' + esc(a.currency) + '</dd>' +
       '<dt>Status</dt><dd>' + esc(a.status) + '</dd>' +
       '<dt>Created</dt><dd>' + esc(fmtDate(a.created_at)) + '</dd>' +
       '</dl>';
-    html += '<h3 style="margin:20px 0 10px;font-size:13.5px">Account transaction history</h3>';
+
+    /* Transaction list with its own action row. */
+    html += '<div class="ledger-head">' +
+      '<h3>Income &amp; expense history</h3>' +
+      '<span class="badge">' + rows.length + (rows.length === 1 ? ' record' : ' records') + '</span>' +
+      '<div class="spacer"></div>' +
+      (can('transactions_create')
+        ? '<button class="btn small" type="button" data-ledger-add="1">+ Add transaction</button>'
+        : '') +
+      '</div>';
+
     if (!rows.length) {
-      html += '<p class="muted small" style="margin:0">No transactions are assigned to this account yet. Assign an account when adding a transaction.</p>';
+      html += '<div class="ledger-empty">' +
+        '<p>No income or expenses recorded in this account yet.</p>' +
+        (can('transactions_create')
+          ? '<button class="btn small" type="button" data-ledger-add="1">Add the first transaction</button>'
+          : '') +
+        '</div>';
     } else {
-      html += '<p class="muted small" style="margin:0 0 10px">Last ' + rows.length + ' transactions · income ' + esc(money(t.income)) + ' · expenses ' + esc(money(t.expense)) + '</p>';
-      html += '<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th></tr></thead><tbody>';
+      html += '<div class="table-wrap" style="margin:0;padding:0"><table class="table">' +
+        '<thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th class="r">Amount</th><th></th></tr></thead><tbody>';
       rows.forEach(function (r) {
-        html += '<tr><td class="muted small" style="white-space:nowrap">' + esc(fmtDate(r.occurred_on)) + '</td>' +
-          '<td>' + esc(r.description || catName(r.category_id)) + '</td>' +
-          '<td class="r amount ' + (r.type === 'income' ? 'pos' : 'neg') + '">' + (r.type === 'income' ? '+' : '−') + esc(money(r.amount)) + '</td></tr>';
+        var c = catById(r.category_id);
+        html += '<tr>' +
+          '<td class="muted small" style="white-space:nowrap">' + esc(fmtDate(r.occurred_on)) + '</td>' +
+          '<td><div class="tx-desc">' + esc(r.description || '—') + '</div></td>' +
+          '<td><span class="rowcat"><span class="swatch" style="background:' + catColor(c) + '"></span>' +
+            esc(c ? c.name : 'Uncategorised') + '</span></td>' +
+          '<td><span class="badge ' + (r.type === 'income' ? 'in' : 'ex') + '">' +
+            (r.type === 'income' ? 'Income' : 'Expense') + '</span></td>' +
+          '<td class="r amount ' + (r.type === 'income' ? 'pos' : 'neg') + '">' +
+            (r.type === 'income' ? '+' : '−') + esc(money(r.amount)) + '</td>' +
+          '<td><div class="row-actions">' +
+            (can('transactions_edit') ? '<button class="icon-btn" type="button" title="Edit" data-ledger-edit="' + r.id + '">✎</button>' : '') +
+            (can('transactions_delete') ? '<button class="icon-btn" type="button" title="Delete" data-ledger-del="' + r.id + '">✕</button>' : '') +
+          '</div></td>' +
+        '</tr>';
       });
       html += '</tbody></table></div>';
     }
-    $('#acct-detail').innerHTML = html;
+
+    host.innerHTML = html;
   } catch (e) {
-    $('#acct-detail').innerHTML = '<p class="muted small">' + esc(errMsg(e)) + '</p>';
+    host.innerHTML = '<p class="muted small" style="margin:0">' + esc(errMsg(e)) + '</p>';
   }
 }
 
-/* ============================================================
-   Team and roles
-   ============================================================ */
-VIEW_LOADERS.team = async function () {
-  var el = $('#view-team');
-  $('#page-sub').textContent = 'Members, roles and permissions';
-  if (!can('users_manage')) {
-    el.innerHTML = '<div class="card">' + emptyState('No access', 'Only owners and administrators can manage team members.') + '</div>';
-    return;
-  }
-  el.innerHTML = loadingCard('Loading team…');
-  try {
-    await loadMembers();
-    var roleCounts = { owner: 0, admin: 0, editor: 0, viewer: 0 };
-    members.forEach(function (m) { if (roleCounts[m.role] != null) roleCounts[m.role]++; });
-
-    var html = '<div class="card"><div class="card-head"><h2>Members</h2>' +
-      '<span class="badge">' + members.length + '</span><div class="spacer"></div>' +
-      '<button class="btn small" type="button" data-invite="1">Invite member</button></div>' +
-      '<p class="muted small" style="margin:0 0 8px">Each member signs in with their own Supabase account. Roles decide what they can do, and the database enforces the same rules.</p>';
-
-    if (!members.length) {
-      html += emptyState('No members recorded', 'Invite a member to share this workspace.');
-    } else {
-      members.forEach(function (m) {
-        var isSelf = m.user_id === user.id;
-        html += '<div class="member-row">' +
-          '<div class="member-name"><div class="avatar">' + esc(initials(m.display_name, m.email)) + '</div>' +
-            '<div><div>' + esc(m.display_name || m.email || 'Member') + (isSelf ? ' <span class="muted small">(you)</span>' : '') + '</div>' +
-            '<div class="member-mail">' + esc(m.email || '') + ' · joined ' + esc(fmtDate(m.created_at)) + '</div></div>' +
-          '</div>' +
-          '<div>' +
-            (m.role === 'owner'
-              ? rolePill('owner')
-              : '<select class="inp" data-member-role="' + m.id + '">' +
-                  ['admin', 'editor', 'viewer'].map(function (r) {
-                    return '<option value="' + r + '"' + (m.role === r ? ' selected' : '') + '>' + roleLabel(r) + '</option>';
-                  }).join('') +
-                '</select>') +
-          '</div>' +
-          '<div class="row-actions">' +
-            (m.role === 'owner' ? '<span class="muted small">Workspace owner</span>' :
-              '<button class="btn danger small" type="button" data-member-del="' + m.id + '">Remove</button>') +
-          '</div>' +
-        '</div>';
-      });
-    }
-    html += '</div>';
-
-    html += '<div class="card"><div class="card-head"><h2>Permission matrix</h2></div>' +
-      '<div class="table-wrap" style="margin:0 -18px;padding:0 18px"><div class="perm-grid" style="min-width:430px">' +
-      '<div class="perm-head" style="text-align:left">Capability</div>' +
-      ROLES.map(function (r) { return '<div class="perm-head">' + esc(roleLabel(r)) + '</div>'; }).join('') +
-      PERMS.map(function (p) {
-        return '<div class="perm-name">' + esc(p.label) + '</div>' +
-          ROLES.map(function (r) {
-            return '<div class="perm-cell">' + (p[r] ? '<span class="perm-yes">✓</span>' : '<span class="perm-no">—</span>') + '</div>';
-          }).join('');
-      }).join('') +
-      '</div></div></div>';
-
-    html += '<div class="card"><div class="card-head"><h2>Your access</h2></div>' +
-      '<p class="small" style="margin:0 0 12px">Signed in as ' + esc(user.email || '') + ' with the ' + rolePill(me.role) + ' role.</p>' +
-      '<div class="perm-grid" style="grid-template-columns:1fr 90px">' +
-      PERMS.map(function (p) {
-        return '<div class="perm-name">' + esc(p.label) + '</div><div class="perm-cell">' +
-          (can(p.key) ? '<span class="perm-yes">Allowed</span>' : '<span class="perm-no">Blocked</span>') + '</div>';
-      }).join('') + '</div></div>';
-
-    el.innerHTML = html;
-
-    $$('[data-member-role]').forEach(function (sel) {
-      sel.addEventListener('change', async function () {
-        var id = sel.getAttribute('data-member-role');
-        var newRole = sel.value;
-        var m = members.filter(function (x) { return x.id === id; })[0];
-        if (!m) return;
-        var ok = await askConfirm('Change role', 'Set ' + (m.display_name || m.email) + ' to ' + roleLabel(newRole) + '? Their access changes immediately.', 'Change role');
-        if (!ok) { VIEW_LOADERS.team(); return; }
-        try {
-          var res = await sb.from('workspace_members').update({ role: newRole }).eq('id', id);
-          if (res.error) throw res.error;
-          toast('Role updated', 'ok');
-          VIEW_LOADERS.team();
-        } catch (e) { toast(errMsg(e), 'err'); VIEW_LOADERS.team(); }
-      });
-    });
-
-    $$('[data-member-del]').forEach(function (btn) {
-      btn.addEventListener('click', async function () {
-        var id = btn.getAttribute('data-member-del');
-        var m = members.filter(function (x) { return x.id === id; })[0];
-        if (!m) return;
-        var ok = await askConfirm('Remove member', 'Remove ' + (m.display_name || m.email) + ' from this workspace? They lose access immediately. Their own records stay intact.', 'Remove', true);
-        if (!ok) return;
-        try {
-          var res = await sb.from('workspace_members').delete().eq('id', id);
-          if (res.error) throw res.error;
-          toast('Member removed', 'ok');
-          VIEW_LOADERS.team();
-        } catch (e) { toast(errMsg(e), 'err'); }
-      });
-    });
-
-    $$('[data-invite]').forEach(function (btn) {
-      btn.addEventListener('click', openInviteModal);
-    });
-  } catch (e) {
-    el.innerHTML = '<div class="card"><h2>Could not load the team</h2><p class="muted small">' + esc(errMsg(e)) + '</p></div>';
-    toast(errMsg(e), 'err');
-  }
-};
-
-function openInviteModal() {
-  if (!can('users_manage')) { toast('Your role cannot manage members.', 'err'); return; }
-  openModal({
-    title: 'Invite member',
-    body:
-      '<label class="field"><span>Email address</span><input class="inp" id="inv-email" type="email" required placeholder="name@example.com"></label>' +
-      '<label class="field"><span>Display name</span><input class="inp" id="inv-name" maxlength="60" placeholder="Optional"></label>' +
-      '<label class="field"><span>Role</span><select class="inp" id="inv-role">' +
-        '<option value="viewer">Viewer</option><option value="editor">Editor</option><option value="admin">Administrator</option>' +
-      '</select></label>' +
-      '<p class="muted small" style="margin:0">The member record is created straight away. They gain access once they sign in with that email address; RLS policies match on their authenticated user id.</p>',
-    submitLabel: 'Add member',
-    onSubmit: async function () {
-      requireSession();
-      var email = $('#inv-email').value.trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address.');
-      var res = await sb.from('workspace_members').insert({
-        owner_id: user.id,
-        email: email,
-        display_name: $('#inv-name').value.trim(),
-        role: $('#inv-role').value,
-        status: 'invited'
-      }).select().single();
-      if (res.error) {
-        if (String(res.error.code) === '23505') throw new Error('That email is already a member.');
-        throw res.error;
-      }
-      toast('Member added', 'ok');
-      VIEW_LOADERS.team();
-    }
-  });
+/* Post a new transaction straight into the account that is open. */
+function ledgerAddTransaction() {
+  if (!ledgerAccountId) return;
+  openTxModal(null, null, ledgerAccountId);
 }
+
+/* Team and roles has been removed from the Standard Edition interface.
+   Each account keeps its own records; RLS on auth.uid() isolates them. */
 
 /* ============================================================
    Internal transfers
@@ -3049,6 +3014,12 @@ function wireEvents() {
     if (da) { deleteAccount(da.getAttribute('data-acct-del')); return; }
     var va = t.closest('[data-acct-view]');
     if (va) { openAccountHistory(va.getAttribute('data-acct-view')); return; }
+    /* Account ledger actions. */
+    if (t.closest('[data-ledger-add]')) { ledgerAddTransaction(); return; }
+    var ledEdit = t.closest('[data-ledger-edit]');
+    if (ledEdit) { openTxModalById(ledEdit.getAttribute('data-ledger-edit')); return; }
+    var ledDel = t.closest('[data-ledger-del]');
+    if (ledDel) { ledgerDeleteTransaction(ledDel.getAttribute('data-ledger-del')); return; }
 
     var nt2 = t.closest('[data-newtransfer]');
     if (nt2) { openTransferModal(); return; }
@@ -3058,7 +3029,7 @@ function wireEvents() {
     if (t.closest('[data-stage2-sql]')) { openMigrationModal(); return; }
   });
 
-  /* team view uses delegated handlers bound at render time */
+
 
   document.addEventListener('change', function (ev) {
     var t = ev.target;
