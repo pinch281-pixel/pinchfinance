@@ -6,9 +6,10 @@
    Flat repository layout: this file sits in the repository root next to
    index.html. No js/ folder, no src/ folder.
 
-   This file owns the interface: helpers, roles and permissions, the router,
-   every view (including the account ledger), the modals and the sound effects.
-   It is loaded after supabase.js and starts the app from init() at the bottom.
+   This file owns the interface: helpers, the English/Arabic dictionary,
+   roles, the router, every view (including the account ledger), the modals
+   and the sound effects. It is loaded after supabase.js and starts the app
+   from init() at the bottom.
 
    Created and owned by James Carlo H. Cadayona.
    Developed under PINCH Software.
@@ -16,7 +17,7 @@
 
 var VERSION = '0.4.1';
 var RELEASE = 'Beta 2';
-var BUILD = 'r188';
+var BUILD = 'r233';
 var EDITION = 'Standard Edition';
 var PRODUCT = 'PINCH Finance';
 var DEVELOPER = 'PINCH Software';
@@ -26,9 +27,7 @@ var OWNER_SUB = 'Developed under PINCH Software.';
 var CFG_KEY = 'pinch.config';
 var PAGE_SIZE = 25;
 
-/* Snapshot of the untouched document, used to hand out a standalone file when
-   the preview sandbox blocks outbound network access. */
-var ORIGINAL_HTML = '<!doctype html>\n' + document.documentElement.outerHTML;
+/* Project connection. Only the public publishable (anon) key belongs here.
 
 /* ---------- helpers ---------- */
 function $(s, r) { return (r || document).querySelector(s); }
@@ -53,18 +52,23 @@ function addMonths(key, n) {
 }
 function monthLabel(key, short) {
   var p = key.split('-'), d = new Date(+p[0], +p[1] - 1, 1);
-  return d.toLocaleDateString(undefined, short ? { month: 'short' } : { month: 'long', year: 'numeric' });
+  return d.toLocaleDateString(localeTag(), short ? { month: 'short' } : { month: 'long', year: 'numeric' });
+}
+/* Locale used for Intl formatting. Arabic keeps Latin digits (ar-u-nu-latn),
+   which is what Gulf and Philippine finance apps use in practice. */
+function localeTag() {
+  return lang === 'ar' ? 'ar-u-nu-latn' : undefined;
 }
 function fmtDate(iso) {
   if (!iso) return '—';
   var p = String(iso).slice(0, 10).split('-');
   if (p.length !== 3) return String(iso);
-  return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString(localeTag(), { day: '2-digit', month: 'short', year: 'numeric' });
 }
 function money(n) {
   var cur = (profile && profile.currency) || 'USD';
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(num(n));
+    return new Intl.NumberFormat(localeTag(), { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(num(n));
   } catch (e) { return num(n).toFixed(2); }
 }
 function initials(name, email) {
@@ -88,11 +92,539 @@ function errMsg(e) {
 var PALETTE = ['#0E7C66', '#2563EB', '#D97706', '#DC2626', '#7C3AED', '#0891B2', '#DB2777', '#65A30D', '#475569', '#C2410C'];
 
 
-var TITLES = {
-  dashboard: 'Dashboard', transactions: 'Transactions', income: 'Income', expenses: 'Expenses',
-  accounts: 'Bank accounts', transfers: 'Transfers', categories: 'Categories', budgets: 'Budgets',
-  reports: 'Reports', profile: 'Profile'
+/* ============================================================
+   Language / i18n
+   ------------------------------------------------------------
+   Two locales ship today: English and Arabic. Arabic sets dir="rtl",
+   swaps in an Arabic typeface, and mirrors the layout. The choice is
+   stored twice - locally so the sign-in screen is already translated,
+   and on the user's profile row so it follows them to another device.
+   ============================================================ */
+var LANGS = [
+  { code: 'en', label: 'English', native: 'English', dir: 'ltr' },
+  { code: 'ar', label: 'Arabic', native: 'العربية', dir: 'rtl' }
+];
+var LANG_KEY = 'pinch.lang';
+var lang = 'en';
+
+var I18N = {
+  en: {
+    'app.starting': 'Starting PINCH Finance…',
+    'app.name': 'PINCH Finance',
+    'app.edition': 'Standard Edition',
+
+    'auth.signin': 'Sign in',
+    'auth.signup': 'Create account',
+    'auth.lead': 'Sign in to your personal finance workspace.',
+    'auth.leadSignup': 'Create your account. A profile and starter categories are created automatically.',
+    'auth.name': 'Full name',
+    'auth.email': 'Email',
+    'auth.password': 'Password',
+    'auth.submitSignin': 'Sign in',
+    'auth.submitSignup': 'Create account',
+    'auth.busySignin': 'Signing in…',
+    'auth.busySignup': 'Creating account…',
+    'auth.forgot': 'Forgot password?',
+    'auth.stay': 'You stay signed in on this device until you sign out. No "remember me" option is needed.',
+    'auth.signedOut': 'Signed out. Your session was cleared on this device.',
+
+    'setup.title': 'Connect Supabase',
+    'setup.body': 'PINCH Finance Standard Edition stores every record in your own Supabase project. Enter the project URL and the public anon key. Never use the service-role key in the browser.',
+    'setup.url': 'Project URL',
+    'setup.key': 'Anon public key',
+    'setup.connect': 'Connect project',
+
+    'nav.dashboard': 'Dashboard',
+    'nav.transactions': 'Transactions',
+    'nav.income': 'Income',
+    'nav.expenses': 'Expenses',
+    'nav.accounts': 'Bank accounts',
+    'nav.transfers': 'Transfers',
+    'nav.categories': 'Categories',
+    'nav.budgets': 'Budgets',
+    'nav.reports': 'Reports',
+    'nav.profile': 'Profile',
+    'nav.signout': 'Sign out',
+    'nav.menu': 'Menu',
+
+    'top.newTransaction': '+ New transaction',
+
+    'om.label': 'Overall money',
+    'om.combined': 'accounts combined',
+    'om.account': 'account',
+    'om.accounts': 'accounts',
+    'om.closedExcluded': 'closed excluded',
+    'om.mixed': 'mixed currencies',
+    'om.none': 'No accounts yet',
+    'om.note': 'Sum of every account balance. Transfers between your own accounts leave this total unchanged.',
+
+    'kpi.income': 'Income',
+    'kpi.expenses': 'Expenses',
+    'kpi.net': 'Net this month',
+    'kpi.lifetime': 'Lifetime net',
+    'kpi.savingsRate': 'Savings rate',
+    'kpi.activeAccounts': 'Active accounts',
+    'kpi.largest': 'Largest balance',
+    'kpi.closed': 'Closed accounts',
+    'kpi.opening': 'Opening balances',
+    'kpi.avgExpense': 'Average monthly expense',
+
+    'dash.cashflow': 'Cash flow — last 6 months',
+    'dash.byCategory': 'Spending by category',
+    'dash.recent': 'Recent activity',
+    'dash.budgets': 'Budgets',
+    'dash.viewAll': 'View all',
+    'dash.manage': 'Manage',
+    'dash.noActivity': 'No activity yet',
+    'dash.noActivityBody': 'Add your first transaction to see the six-month cash flow.',
+    'dash.nothingSpent': 'Nothing spent this month',
+    'dash.noTx': 'No transactions yet',
+    'dash.noTxBody': 'Your recorded income and expenses will appear here.',
+
+    'acc.title': 'Your accounts',
+    'acc.sub': 'Manually managed accounts and cash wallets',
+    'acc.onRecord': 'on record',
+    'acc.add': '+ Add new account',
+    'acc.addFirst': 'Add your first account',
+    'acc.empty': 'No bank accounts yet',
+    'acc.emptyBody': 'Add a savings account, checking account or cash wallet. Balances are calculated from the transactions you assign to each account.',
+    'acc.history': 'History',
+    'acc.edit': 'Edit',
+    'acc.delete': 'Delete',
+    'acc.opening': 'Opening',
+    'acc.inOut': 'In / Out',
+    'acc.current': 'Current balance',
+    'acc.institution': 'Institution',
+    'acc.type': 'Type',
+    'acc.number': 'Account number',
+    'acc.currency': 'Currency',
+    'acc.status': 'Status',
+    'acc.created': 'Created',
+    'acc.ledgerTitle': 'Income & expense history',
+    'acc.ledgerEmpty': 'No income or expenses recorded in this account yet.',
+    'acc.addTx': '+ Add transaction',
+    'acc.addFirstTx': 'Add the first transaction',
+    'acc.records': 'records',
+    'acc.record': 'record',
+    'acc.readOnly': 'Your role can view accounts but not create, edit or delete them. Balances are read-only.',
+
+    'tx.date': 'Date',
+    'tx.description': 'Description',
+    'tx.category': 'Category',
+    'tx.type': 'Type',
+    'tx.amount': 'Amount',
+    'tx.account': 'Account',
+    'tx.income': 'Income',
+    'tx.expense': 'Expense',
+    'tx.uncategorised': 'Uncategorised',
+    'tx.noAccount': 'No account',
+    'tx.new': 'New transaction',
+    'tx.editTitle': 'Edit transaction',
+    'tx.addBtn': 'Add transaction',
+    'tx.saveBtn': 'Save changes',
+    'tx.added': 'Transaction added',
+    'tx.updated': 'Transaction updated',
+    'tx.deleted': 'Transaction deleted',
+    'tx.incomeSaved': 'Income recorded',
+    'tx.expenseSaved': 'Expense recorded',
+    'tx.allCategories': 'All categories',
+    'tx.allAccounts': 'All accounts',
+    'tx.allTypes': 'All types',
+    'tx.search': 'Search description',
+    'tx.clear': 'Clear filters',
+    'tx.add': 'Add',
+    'tx.deleteQ': 'Delete this transaction? The account balance will adjust. This cannot be undone.',
+
+    'tr.title': 'Move money between your own accounts',
+    'tr.new': 'New transfer',
+    'tr.from': 'From',
+    'tr.to': 'To',
+    'tr.amount': 'Transfer amount',
+    'tr.note': 'Note',
+    'tr.reference': 'Reference',
+    'tr.date': 'Date',
+    'tr.confirm': 'Confirm transfer',
+    'tr.posted': 'Transfer posted',
+    'tr.deleted': 'Transfer deleted',
+    'tr.history': 'Transfer history',
+    'tr.empty': 'No transfers yet',
+    'tr.emptyBody': 'Transfers you make between your own accounts will be listed here.',
+    'tr.needTwo': 'One more account needed',
+    'tr.needTwoBody': 'Transfers move money between two of your accounts. Add a second account to continue.',
+
+    'cat.title': 'Income and expense categories',
+    'cat.new': 'New category',
+    'cat.name': 'Name',
+    'cat.color': 'Colour',
+    'cat.empty': 'No categories yet',
+
+    'bud.title': 'Monthly limits per expense category',
+    'bud.budgeted': 'Budgeted',
+    'bud.spent': 'Spent',
+    'bud.remaining': 'Remaining',
+    'bud.copy': 'Copy last month',
+    'bud.noLimit': 'No limit',
+    'bud.spentLabel': 'spent',
+    'bud.left': 'left',
+    'bud.over': 'Over by',
+    'bud.saved': 'Budget saved',
+
+    'rep.title': 'Monthly and yearly summaries',
+    'rep.yearly': 'Yearly',
+    'rep.monthly': 'Monthly',
+    'rep.export': 'Export CSV',
+    'rep.totalIncome': 'Total income',
+    'rep.totalExpenses': 'Total expenses',
+    'rep.net': 'Net result',
+    'rep.monthly': 'Month-by-month',
+    'rep.byMonth': 'Income vs expenses by month',
+    'rep.where': 'Where the money went',
+    'rep.categoryDetail': 'Category detail',
+    'rep.highlights': 'Period highlights',
+    'rep.noData': 'No data for',
+
+    'prof.title': 'Your account details',
+    'prof.profile': 'Profile',
+    'prof.account': 'Account',
+    'prof.currency': 'Currency',
+    'prof.target': 'Monthly savings target (optional)',
+    'prof.save': 'Save profile',
+    'prof.saved': 'Profile saved',
+    'prof.signedIn': 'Signed in as',
+    'prof.memberSince': 'Member since',
+    'prof.userId': 'User ID',
+    'prof.role': 'Your role',
+    'prof.rls': 'Row level security',
+    'prof.session': 'Session persistence',
+    'prof.sessionVal': 'Survives refresh',
+    'prof.refreshAt': 'Access token refreshes at',
+    'prof.reset': 'Send password reset email',
+    'prof.language': 'Language',
+    'prof.languageHint': 'Saved to your account and applied on every device you sign in from.',
+    'prof.langSaved': 'Language preference saved',
+
+    'common.close': 'Close',
+    'common.cancel': 'Cancel',
+    'common.confirm': 'Confirm',
+    'common.delete': 'Delete',
+    'common.save': 'Save',
+    'common.loading': 'Loading…',
+    'common.error': 'Something went wrong',
+    'common.required': 'This field is required',
+    'common.standardUser': 'Standard User',
+    'common.credit1': 'Created and owned by James Carlo H. Cadayona',
+    'common.credit2': 'Developed under PINCH Software.',
+
+    'toast.dbError': 'Database error',
+    'toast.netBlocked': 'This preview cannot reach Supabase',
+    'toast.sessionExpired': 'Your session expired. Sign in again.'
+  },
+
+  ar: {
+    'app.starting': 'جارٍ تشغيل PINCH Finance…',
+    'app.name': 'PINCH Finance',
+    'app.edition': 'الإصدار القياسي',
+
+    'auth.signin': 'تسجيل الدخول',
+    'auth.signup': 'إنشاء حساب',
+    'auth.lead': 'سجّل الدخول إلى مساحة إدارتك المالية الشخصية.',
+    'auth.leadSignup': 'أنشئ حسابك. سيُنشأ ملف شخصي وفئات أولية تلقائيًا.',
+    'auth.name': 'الاسم الكامل',
+    'auth.email': 'البريد الإلكتروني',
+    'auth.password': 'كلمة المرور',
+    'auth.submitSignin': 'تسجيل الدخول',
+    'auth.submitSignup': 'إنشاء حساب',
+    'auth.busySignin': 'جارٍ تسجيل الدخول…',
+    'auth.busySignup': 'جارٍ إنشاء الحساب…',
+    'auth.forgot': 'هل نسيت كلمة المرور؟',
+    'auth.stay': 'تبقى مسجّلًا للدخول على هذا الجهاز حتى تسجّل الخروج. لا حاجة لخيار «تذكّرني».',
+    'auth.signedOut': 'تم تسجيل الخروج. أُزيلت الجلسة من هذا الجهاز.',
+
+    'setup.title': 'الاتصال بـ Supabase',
+    'setup.body': 'يخزّن PINCH Finance الإصدار القياسي كل السجلات في مشروع Supabase الخاص بك. أدخل رابط المشروع ومفتاح anon العام. لا تستخدم مفتاح service-role في المتصفح أبدًا.',
+    'setup.url': 'رابط المشروع',
+    'setup.key': 'المفتاح العام anon',
+    'setup.connect': 'الاتصال بالمشروع',
+
+    'nav.dashboard': 'لوحة المعلومات',
+    'nav.transactions': 'الحركات',
+    'nav.income': 'الدخل',
+    'nav.expenses': 'المصروفات',
+    'nav.accounts': 'الحسابات البنكية',
+    'nav.transfers': 'التحويلات',
+    'nav.categories': 'الفئات',
+    'nav.budgets': 'الميزانيات',
+    'nav.reports': 'التقارير',
+    'nav.profile': 'الملف الشخصي',
+    'nav.signout': 'تسجيل الخروج',
+    'nav.menu': 'القائمة',
+
+    'top.newTransaction': '+ حركة جديدة',
+
+    'om.label': 'إجمالي المال',
+    'om.combined': 'حسابات مجتمعة',
+    'om.account': 'حساب',
+    'om.accounts': 'حسابات',
+    'om.closedExcluded': 'مغلقة مستثناة',
+    'om.mixed': 'عملات مختلطة',
+    'om.none': 'لا توجد حسابات بعد',
+    'om.note': 'مجموع أرصدة جميع الحسابات. التحويلات بين حساباتك لا تغيّر هذا الإجمالي.',
+
+    'kpi.income': 'الدخل',
+    'kpi.expenses': 'المصروفات',
+    'kpi.net': 'الصافي هذا الشهر',
+    'kpi.lifetime': 'الصافي الكلي',
+    'kpi.savingsRate': 'معدل الادخار',
+    'kpi.activeAccounts': 'الحسابات النشطة',
+    'kpi.largest': 'أكبر رصيد',
+    'kpi.closed': 'الحسابات المغلقة',
+    'kpi.opening': 'الأرصدة الافتتاحية',
+    'kpi.avgExpense': 'متوسط المصروف الشهري',
+
+    'dash.cashflow': 'التدفق النقدي — آخر 6 أشهر',
+    'dash.byCategory': 'الإنفاق حسب الفئة',
+    'dash.recent': 'النشاط الأخير',
+    'dash.budgets': 'الميزانيات',
+    'dash.viewAll': 'عرض الكل',
+    'dash.manage': 'إدارة',
+    'dash.noActivity': 'لا يوجد نشاط بعد',
+    'dash.noActivityBody': 'أضف أول حركة لعرض التدفق النقدي لستة أشهر.',
+    'dash.nothingSpent': 'لم يُنفق شيء هذا الشهر',
+    'dash.noTx': 'لا توجد حركات بعد',
+    'dash.noTxBody': 'ستظهر هنا الإيرادات والمصروفات المسجّلة.',
+
+    'acc.title': 'حساباتك',
+    'acc.sub': 'حسابات ومحافظ نقدية تُدار يدويًا',
+    'acc.onRecord': 'مسجّل',
+    'acc.add': '+ إضافة حساب جديد',
+    'acc.addFirst': 'أضف حسابك الأول',
+    'acc.empty': 'لا توجد حسابات بنكية بعد',
+    'acc.emptyBody': 'أضف حساب توفير أو حساب جارٍ أو محفظة نقدية. تُحسب الأرصدة من الحركات المنسوبة لكل حساب.',
+    'acc.history': 'السجل',
+    'acc.edit': 'تعديل',
+    'acc.delete': 'حذف',
+    'acc.opening': 'الافتتاحي',
+    'acc.inOut': 'وارد / صادر',
+    'acc.current': 'الرصيد الحالي',
+    'acc.institution': 'المؤسسة',
+    'acc.type': 'النوع',
+    'acc.number': 'رقم الحساب',
+    'acc.currency': 'العملة',
+    'acc.status': 'الحالة',
+    'acc.created': 'تاريخ الإنشاء',
+    'acc.ledgerTitle': 'سجل الدخل والمصروفات',
+    'acc.ledgerEmpty': 'لا توجد إيرادات أو مصروفات مسجّلة في هذا الحساب بعد.',
+    'acc.addTx': '+ إضافة حركة',
+    'acc.addFirstTx': 'أضف أول حركة',
+    'acc.records': 'سجلات',
+    'acc.record': 'سجل',
+    'acc.readOnly': 'دورك يسمح بعرض الحسابات فقط دون إنشاء أو تعديل أو حذف. الأرصدة للقراءة فقط.',
+
+    'tx.date': 'التاريخ',
+    'tx.description': 'الوصف',
+    'tx.category': 'الفئة',
+    'tx.type': 'النوع',
+    'tx.amount': 'المبلغ',
+    'tx.account': 'الحساب',
+    'tx.income': 'دخل',
+    'tx.expense': 'مصروف',
+    'tx.uncategorised': 'بدون فئة',
+    'tx.noAccount': 'بدون حساب',
+    'tx.new': 'حركة جديدة',
+    'tx.editTitle': 'تعديل الحركة',
+    'tx.addBtn': 'إضافة الحركة',
+    'tx.saveBtn': 'حفظ التغييرات',
+    'tx.added': 'أُضيفت الحركة',
+    'tx.updated': 'حُدّثت الحركة',
+    'tx.deleted': 'حُذفت الحركة',
+    'tx.incomeSaved': 'سُجّل الدخل',
+    'tx.expenseSaved': 'سُجّل المصروف',
+    'tx.allCategories': 'كل الفئات',
+    'tx.allAccounts': 'كل الحسابات',
+    'tx.allTypes': 'كل الأنواع',
+    'tx.search': 'بحث في الوصف',
+    'tx.clear': 'مسح عوامل التصفية',
+    'tx.add': 'إضافة',
+    'tx.deleteQ': 'حذف هذه الحركة؟ سيُعدّل رصيد الحساب. لا يمكن التراجع.',
+
+    'tr.title': 'نقل الأموال بين حساباتك',
+    'tr.new': 'تحويل جديد',
+    'tr.from': 'من',
+    'tr.to': 'إلى',
+    'tr.amount': 'مبلغ التحويل',
+    'tr.note': 'ملاحظة',
+    'tr.reference': 'المرجع',
+    'tr.date': 'التاريخ',
+    'tr.confirm': 'تأكيد التحويل',
+    'tr.posted': 'تم تنفيذ التحويل',
+    'tr.deleted': 'حُذف التحويل',
+    'tr.history': 'سجل التحويلات',
+    'tr.empty': 'لا توجد تحويلات بعد',
+    'tr.emptyBody': 'ستظهر هنا التحويلات بين حساباتك.',
+    'tr.needTwo': 'يلزم حساب آخر',
+    'tr.needTwoBody': 'التحويل ينقل المال بين حسابين لديك. أضف حسابًا ثانيًا للمتابعة.',
+
+    'cat.title': 'فئات الدخل والمصروفات',
+    'cat.new': 'فئة جديدة',
+    'cat.name': 'الاسم',
+    'cat.color': 'اللون',
+    'cat.empty': 'لا توجد فئات بعد',
+
+    'bud.title': 'حدود شهرية لكل فئة مصروف',
+    'bud.budgeted': 'الميزانية',
+    'bud.spent': 'المُنفق',
+    'bud.remaining': 'المتبقي',
+    'bud.copy': 'نسخ الشهر الماضي',
+    'bud.noLimit': 'بلا حد',
+    'bud.spentLabel': 'مُنفق',
+    'bud.left': 'متبقي',
+    'bud.over': 'تجاوز بـ',
+    'bud.saved': 'حُفظت الميزانية',
+
+    'rep.title': 'ملخصات شهرية وسنوية',
+    'rep.yearly': 'سنوي',
+    'rep.monthly': 'شهري',
+    'rep.export': 'تصدير CSV',
+    'rep.totalIncome': 'إجمالي الدخل',
+    'rep.totalExpenses': 'إجمالي المصروفات',
+    'rep.net': 'النتيجة الصافية',
+    'rep.byMonth': 'الدخل مقابل المصروفات شهريًا',
+    'rep.where': 'أين ذهب المال',
+    'rep.categoryDetail': 'تفصيل الفئات',
+    'rep.highlights': 'أبرز الفترات',
+    'rep.noData': 'لا توجد بيانات لـ',
+
+    'prof.title': 'تفاصيل حسابك',
+    'prof.profile': 'الملف الشخصي',
+    'prof.account': 'الحساب',
+    'prof.currency': 'العملة',
+    'prof.target': 'هدف الادخار الشهري (اختياري)',
+    'prof.save': 'حفظ الملف',
+    'prof.saved': 'حُفظ الملف الشخصي',
+    'prof.signedIn': 'مسجّل الدخول باسم',
+    'prof.memberSince': 'عضو منذ',
+    'prof.userId': 'معرّف المستخدم',
+    'prof.role': 'دورك',
+    'prof.rls': 'أمان مستوى الصف',
+    'prof.session': 'استمرارية الجلسة',
+    'prof.sessionVal': 'تصمد بعد التحديث',
+    'prof.refreshAt': 'يتجدد رمز الوصول في',
+    'prof.reset': 'إرسال بريد إعادة تعيين كلمة المرور',
+    'prof.language': 'اللغة',
+    'prof.languageHint': 'تُحفظ في حسابك وتُطبّق على كل جهاز تسجّل الدخول منه.',
+    'prof.langSaved': 'حُفظ تفضيل اللغة',
+
+    'common.close': 'إغلاق',
+    'common.cancel': 'إلغاء',
+    'common.confirm': 'تأكيد',
+    'common.delete': 'حذف',
+    'common.save': 'حفظ',
+    'common.loading': 'جارٍ التحميل…',
+    'common.error': 'حدث خطأ ما',
+    'common.required': 'هذا الحقل مطلوب',
+    'common.standardUser': 'مستخدم قياسي',
+    'common.credit1': 'أُنشئ ومملوك بواسطة James Carlo H. Cadayona',
+    'common.credit2': 'طُوّر تحت PINCH Software.',
+
+    'toast.dbError': 'خطأ في قاعدة البيانات',
+    'toast.netBlocked': 'هذه المعاينة لا تستطيع الوصول إلى Supabase',
+    'toast.sessionExpired': 'انتهت جلستك. سجّل الدخول مرة أخرى.'
+  }
 };
+
+/* Look up a key. Falls back to English, then to the key itself, so a missing
+   translation degrades to readable text rather than an empty label. */
+function t(key) {
+  var pack = I18N[lang] || I18N.en;
+  if (pack && pack[key] != null) return pack[key];
+  if (I18N.en[key] != null) return I18N.en[key];
+  return key;
+}
+
+function langMeta(code) {
+  for (var i = 0; i < LANGS.length; i++) if (LANGS[i].code === code) return LANGS[i];
+  return LANGS[0];
+}
+
+/* Inline bilingual helper for view templates.
+   bi('English text', 'النص العربي') returns the right one for the active
+   language. Used where a full key would add noise without adding value. */
+function bi(en, ar) { return lang === 'ar' ? ar : en; }
+
+/* Apply a language to the document: dir, lang, static markup, then repaint. */
+function applyLang(code, opts) {
+  lang = I18N[code] ? code : 'en';
+  var meta = langMeta(lang);
+  var html = document.documentElement;
+  html.setAttribute('lang', lang);
+  html.setAttribute('dir', meta.dir);
+
+  /* Static markup carries data-i18n (text) and data-i18n-ph (placeholder). */
+  $$('[data-i18n]').forEach(function (el) {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+  $$('[data-i18n-ph]').forEach(function (el) {
+    el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph')));
+  });
+  $$('[data-i18n-aria]').forEach(function (el) {
+    el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+  });
+
+  $$('.lang-btn').forEach(function (b) {
+    b.classList.toggle('on', b.getAttribute('data-lang') === lang);
+  });
+
+  document.title = t('app.name') + ' — ' + t('app.edition');
+
+  if (!opts || !opts.silent) {
+    if (appReady) {
+      renderShell();
+      var fn = VIEW_LOADERS[state.view];
+      if (fn) fn();
+    }
+  }
+}
+
+/* Persist the choice: locally first (works before sign-in), then on the
+   profile row so it follows the user to another device. */
+async function setLanguage(code, opts) {
+  var next = I18N[code] ? code : 'en';
+  applyLang(next, opts);
+  try { await storeSet(LANG_KEY, next); } catch (e) { /* ignore */ }
+
+  if (user && profile) {
+    profile.language = next;
+    try {
+      var res = await sb.from('profiles').update({ language: next }).eq('id', user.id);
+      /* A project without the language column simply keeps the local copy. */
+      if (res.error && !isMissingTable(res.error) && String(res.error.code) !== '42703') {
+        /* ignore: the local preference still applies */
+      }
+    } catch (e) { /* ignore */ }
+    if (!opts || !opts.quiet) toast(t('prof.langSaved'), 'ok');
+  }
+}
+
+/* Read the saved preference before the first paint. */
+async function loadLanguage() {
+  var saved = null;
+  try { saved = await storeGet(LANG_KEY); } catch (e) { /* ignore */ }
+  if (typeof saved === 'object' && saved && saved.v) saved = saved.v;
+  if (typeof saved === 'string' && I18N[saved]) return saved;
+  /* No local choice: fall back to the browser's language. */
+  var nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
+  return I18N[nav] ? nav : 'en';
+}
+
+
+/* View titles are i18n keys; showView resolves them through t(). */
+var TITLES = {
+  dashboard: 'nav.dashboard', transactions: 'nav.transactions', income: 'nav.income',
+  expenses: 'nav.expenses', accounts: 'nav.accounts', transfers: 'nav.transfers',
+  categories: 'nav.categories', budgets: 'nav.budgets', reports: 'nav.reports',
+  profile: 'nav.profile'
+};
+function viewTitle(name) { return TITLES[name] ? t(TITLES[name]) : ''; }
 
 /* ---------- role-based access control ----------
    The role is stored per workspace member in Postgres and every permission is
@@ -156,18 +688,18 @@ function applyNavVisibility() {
 }
 
 /* Stage 2 needs four new tables plus an account_id column. Until that SQL has
-   been run, the app runs in Stage 1 mode and says so. */
+   been run, the app runs in Stage 1 mode and says so.
+   No setup instructions or SQL are surfaced in the interface. */
 function renderStage2Notice() {
   var host = $('#stage2-notice');
   if (!host) return;
   if (stage2Ready) { host.innerHTML = ''; host.classList.add('hidden'); return; }
   host.classList.remove('hidden');
   host.innerHTML = '<div class="notice warn" style="margin:0 0 16px">' +
-    '<div style="flex:1"><strong>Stage 2 database objects are missing.</strong> ' +
-    'Bank accounts, roles and permissions need four tables and one column that are not in this project yet. ' +
-    'Everything from Stage 1 keeps working; the new modules stay hidden until the migration runs.</div>' +
-    '<button class="btn small" type="button" data-stage2-sql="1" style="flex:none">Show migration SQL</button>' +
-    '</div>';
+    '<div style="flex:1"><strong>' + esc(bi('Some features are unavailable.', 'بعض الميزات غير متاحة.')) + '</strong> ' +
+    esc(bi('Bank accounts, transfers and permissions are not available on this workspace yet. Everything already recorded stays available.',
+           'الحسابات البنكية والتحويلات والصلاحيات غير متاحة في مساحة العمل هذه بعد. تبقى كل السجلات الحالية متاحة.')) +
+    '</div></div>';
 }
 
 var state = {
@@ -198,50 +730,34 @@ function isNetworkError(e) {
   return /failed to fetch|load failed|networkerror|network error|blocked|err_|csp|refused to connect|cors/i.test(m);
 }
 
+/* Shown when the browser cannot reach the database at all. No developer
+   diagnostics, no download shortcuts, no project controls. */
 function showNetblock(detail) {
   if (!document.getElementById('netblock')) {
     var d = document.createElement('div');
     d.id = 'netblock';
     d.className = 'center-screen hidden';
     d.innerHTML =
-      '<div class="auth-card" style="max-width:560px">' +
+      '<div class="auth-card" style="max-width:520px">' +
         '<div class="brand-mark">P</div>' +
-        '<h1>This preview cannot reach Supabase</h1>' +
-        '<p class="muted small">The Jetdraft artifact runtime blocks network requests to endpoints outside its own artifact API, so the browser cannot open a connection to <code>zfhosceosdowhbilnoao.supabase.co</code>. This is a sandbox restriction, not a credential or database problem: the project URL and publishable key are valid and the tables and RLS policies are in place.</p>' +
-        '<p class="muted small">Run the app outside the sandbox. Download the standalone file and open it in a normal browser tab, or host it anywhere static. Supabase accepts requests from any origin, so it will connect immediately.</p>' +
+        '<h1 data-netblock-title>Connection unavailable</h1>' +
+        '<p class="muted small" data-netblock-body>PINCH Finance could not reach its database. Check your internet connection and try again.</p>' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px">' +
-          '<button class="btn" type="button" id="nb-download">Download standalone app</button>' +
-          '<button class="btn ghost" type="button" id="nb-retry">Retry connection</button>' +
-          '<button class="btn ghost" type="button" id="nb-change">Change project</button>' +
+          '<button class="btn" type="button" id="nb-retry">Try again</button>' +
         '</div>' +
-        '<p class="hint" id="nb-msg"></p>' +
-        '<details class="sqlbox"><summary>Technical detail</summary><pre class="code" id="nb-detail"></pre></details>' +
       '</div>';
     document.body.appendChild(d);
 
-    d.querySelector('#nb-download').addEventListener('click', function () {
-      try {
-        var blob = new Blob([ORIGINAL_HTML], { type: 'text/html;charset=utf-8' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'pinch-finance-0.1.0.html';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 400);
-        setMsg('#nb-msg', 'Downloaded. Open the file in a browser tab to use the app.', 'ok');
-      } catch (err) {
-        setMsg('#nb-msg', 'Download blocked by the sandbox. Ask for the exported file link instead.', 'err');
-      }
-    });
     d.querySelector('#nb-retry').addEventListener('click', function () {
-      var cfg = readCfg();
-      if (!cfg.url || !cfg.key) { show('setup'); return; }
-      startClient(cfg);
+      location.reload();
     });
-    d.querySelector('#nb-change').addEventListener('click', function () { resetConnection(); });
   }
-  var pre = document.getElementById('nb-detail');
-  if (pre) pre.textContent = String(detail || 'No further detail.');
+  /* Text follows the active language. */
+  var title = document.querySelector('[data-netblock-title]');
+  var body = document.querySelector('[data-netblock-body]');
+  if (title) title.textContent = bi('Connection unavailable', 'الاتصال غير متاح');
+  if (body) body.textContent = bi('PINCH Finance could not reach its database. Check your internet connection and try again.',
+    'تعذّر على PINCH Finance الوصول إلى قاعدة البيانات. تحقّق من اتصالك بالإنترنت وحاول مرة أخرى.');
   show('netblock');
 }
 
@@ -250,13 +766,16 @@ async function enterApp() {
   if (appReady) return;
   appReady = true;
   show('app');
-  try {
-    await loadProfile();
-  } catch (e) {
+  try { await loadProfile(); } catch (e) {
     appReady = false;
     if (isNetworkError(e)) { showNetblock('Profile query was blocked: ' + errMsg(e)); return; }
     renderFatal(e);
     return;
+  }
+  /* The profile carries the user's own language choice; apply it now that the
+     row is loaded, before any view renders. */
+  if (profile && profile.language && I18N[profile.language] && profile.language !== lang) {
+    await setLanguage(profile.language, { silent: true, quiet: true });
   }
   /* Role and accounts are optional: without the Stage 2 objects the app runs
      in Stage 1 mode instead of refusing to start. */
@@ -327,17 +846,17 @@ function showView(name) {
   };
   if (gate[name] && !can(gate[name])) {
     var el = document.getElementById('view-' + name);
-    if (el) el.innerHTML = '<div class="card">' + emptyState('Not available for your role', 'The ' + appRoleLabel() + ' role does not include ' + TITLES[name].toLowerCase() + ' access.') + '</div>';
+    if (el) el.innerHTML = '<div class="card">' + emptyState('Not available for your role', 'The ' + appRoleLabel() + ' role does not include ' + viewTitle(name).toLowerCase() + ' access.') + '</div>';
     $$('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
     $$('.nav-item').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-view') === name); });
-    $('#page-title').textContent = TITLES[name];
+    $('#page-title').textContent = viewTitle(name);
     $('#sidebar').classList.remove('open');
     return;
   }
   state.view = name;
   $$('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
   $$('.nav-item').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-view') === name); });
-  $('#page-title').textContent = TITLES[name];
+  $('#page-title').textContent = viewTitle(name);
   $('#sidebar').classList.remove('open');
   if (location.hash !== '#/' + name) {
     try { history.replaceState(null, '', '#/' + name); } catch (e) { /* ignore */ }
@@ -1914,9 +2433,9 @@ VIEW_LOADERS.transfers = async function () {
     await loadTransfers();
 
     if (!stage2Ready || !transfersReady) {
-      el.innerHTML = '<div class="card">' + emptyState('Transfers need the Stage 3 tables',
-        'Run the migration SQL to add the transfers table and the atomic transfer function.',
-        '<button class="btn" type="button" data-stage2-sql="1">Show migration SQL</button>') + '</div>';
+      el.innerHTML = '<div class="card">' + emptyState(
+        bi('Transfers are unavailable', 'التحويلات غير متاحة'),
+        bi('Transfers are not available on this workspace yet.', 'التحويلات غير متاحة في مساحة العمل هذه بعد.')) + '</div>';
       return;
     }
 
@@ -2078,35 +2597,40 @@ VIEW_LOADERS.profile = async function () {
     await loadProfile();
     var created = profile.created_at ? fmtDate(profile.created_at) : '—';
     var html = '<div class="grid2">' +
-      '<div class="card"><div class="card-head"><h2>Profile</h2></div>' +
+      '<div class="card"><div class="card-head"><h2>' + esc(t('prof.profile')) + '</h2></div>' +
         '<form id="profile-form">' +
-          '<label class="field"><span>Full name</span><input class="inp" id="pf-name" maxlength="80" value="' + esc(profile.full_name || '') + '"></label>' +
-          '<label class="field"><span>Email</span><input class="inp" value="' + esc(user.email || '') + '" disabled></label>' +
-          '<label class="field"><span>Currency</span><select class="inp" id="pf-currency">' +
+          '<label class="field"><span>' + esc(t('auth.name')) + '</span><input class="inp" id="pf-name" maxlength="80" value="' + esc(profile.full_name || '') + '"></label>' +
+          '<label class="field"><span>' + esc(t('auth.email')) + '</span><input class="inp" value="' + esc(user.email || '') + '" disabled></label>' +
+          '<label class="field"><span>' + esc(t('prof.currency')) + '</span><select class="inp" id="pf-currency">' +
             CURRENCIES.map(function (c) { return '<option value="' + c + '"' + (c === profile.currency ? ' selected' : '') + '>' + c + '</option>'; }).join('') +
           '</select></label>' +
-          '<label class="field"><span>Monthly savings target (optional)</span>' +
+          '<label class="field"><span>' + esc(t('prof.language')) + '</span><select class="inp" id="pf-language">' +
+            LANGS.map(function (l) {
+              return '<option value="' + l.code + '"' + (l.code === lang ? ' selected' : '') + '>' + esc(l.native) + '</option>';
+            }).join('') +
+          '</select></label>' +
+          '<p class="muted small" style="margin:-4px 0 12px">' + esc(t('prof.languageHint')) + '</p>' +
+          '<label class="field"><span>' + esc(t('prof.target')) + '</span>' +
             '<input class="inp" id="pf-target" type="number" min="0" step="0.01" value="' + (profile.monthly_budget ? esc(profile.monthly_budget) : '') + '" placeholder="0.00"></label>' +
-          '<button class="btn" type="submit">Save profile</button>' +
+          '<button class="btn" type="submit">' + esc(t('prof.save')) + '</button>' +
           '<p class="form-err" id="pf-err"></p>' +
         '</form></div>' +
-      '<div class="card"><div class="card-head"><h2>Account</h2></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Signed in as</span><span style="font-weight:550">' + esc(user.email || '—') + '</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Member since</span><span>' + esc(created) + '</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">User ID</span><span class="mono small">' + esc(user.id.slice(0, 8)) + '…</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Your role</span><span>' + rolePill(me.role) + '</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Row level security</span><span class="badge in">Enabled</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Session persistence</span><span class="badge in">Survives refresh</span></div>' +
-        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">Access token refreshes at</span><span class="small mono">' + esc(session && session.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : 'auto-refresh') + '</span></div>' +
+      '<div class="card"><div class="card-head"><h2>' + esc(t('prof.account')) + '</h2></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.signedIn')) + '</span><span style="font-weight:550">' + esc(user.email || '—') + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.memberSince')) + '</span><span>' + esc(created) + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.userId')) + '</span><span class="mono small">' + esc(user.id.slice(0, 8)) + '…</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.role')) + '</span><span>' + esc(appRoleLabel()) + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.rls')) + '</span><span class="badge in">' + esc(bi('Enabled', 'مُفعّل')) + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.session')) + '</span><span class="badge in">' + esc(t('prof.sessionVal')) + '</span></div>' +
+        '<div class="budget-row" style="grid-template-columns:1fr auto"><span class="muted">' + esc(t('prof.refreshAt')) + '</span><span class="small mono">' + esc(session && session.expires_at ? new Date(session.expires_at * 1000).toLocaleString(localeTag()) : 'auto-refresh') + '</span></div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">' +
-          '<button class="btn ghost small" type="button" id="pf-pw">Send password reset email</button>' +
-          '<button class="btn ghost small" type="button" id="pf-signout">Sign out</button>' +
-          '<button class="btn danger small" type="button" id="pf-disconnect">Change Supabase project</button>' +
+          '<button class="btn ghost small" type="button" id="pf-pw">' + esc(t('prof.reset')) + '</button>' +
+          '<button class="btn ghost small" type="button" id="pf-signout">' + esc(t('nav.signout')) + '</button>' +
         '</div>' +
-        '<p class="muted small" style="margin-top:14px">' + esc(PRODUCT) + ' ' + esc(EDITION) + ' · v' + esc(VERSION) + ' ' + esc(RELEASE) + '. Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.</p>' +
+        '<p class="muted small" style="margin-top:14px">' + esc(PRODUCT) + ' ' + esc(t('app.edition')) + ' · v' + esc(VERSION) + ' ' + esc(RELEASE) + '. ' + esc(bi('Every record is stored in your Supabase project and protected by RLS policies that scope rows to your authenticated user id.', 'كل سجل محفوظ في مشروع Supabase الخاص بك ومحمي بسياسات RLS التي تحصر الصفوف بمعرّف المستخدم المسجّل.')) + '</p>' +
         '<div class="credits">' +
-          '<div><strong>' + esc(OWNER_LINE) + '</strong></div>' +
-          '<div>' + esc(OWNER_SUB) + '</div>' +
+          '<div><strong>' + esc(t('common.credit1')) + '</strong></div>' +
+          '<div>' + esc(t('common.credit2')) + '</div>' +
         '</div>' +
       '</div></div>';
     el.innerHTML = html;
@@ -2124,13 +2648,18 @@ VIEW_LOADERS.profile = async function () {
           id: user.id,
           full_name: $('#pf-name').value.trim(),
           currency: $('#pf-currency').value,
-          monthly_budget: target === '' ? null : Math.round(num(target) * 100) / 100
+          monthly_budget: target === '' ? null : Math.round(num(target) * 100) / 100,
+          language: $('#pf-language').value
         };
         var res = await sb.from('profiles').upsert(payload).select().single();
         if (res.error) throw res.error;
         profile = res.data;
+        /* Apply the language the user just chose, then repaint everything. */
+        if (payload.language && payload.language !== lang) {
+          await setLanguage(payload.language, { silent: true, quiet: true });
+        }
         renderShell();
-        toast('Profile saved', 'ok');
+        toast(t('prof.saved'), 'ok');
         VIEW_LOADERS.profile();
       } catch (e) {
         err.textContent = errMsg(e);
@@ -2146,11 +2675,6 @@ VIEW_LOADERS.profile = async function () {
       } catch (e) { toast(errMsg(e), 'err'); }
     });
     $('#pf-signout').addEventListener('click', doSignOut);
-    $('#pf-disconnect').addEventListener('click', async function () {
-      var ok = await askConfirm('Change Supabase project', 'Disconnect this project? Your data stays in Supabase; the app will ask for connection details again.', 'Disconnect');
-      if (!ok) return;
-      await resetConnection();
-    });
   } catch (e) {
     el.innerHTML = '<div class="card"><h2>Could not load the profile</h2><p class="muted small">' + esc(errMsg(e)) + '</p></div>';
     toast(errMsg(e), 'err');
@@ -2207,6 +2731,7 @@ var SCHEMA_SQL = [
 '  full_name text not null default \'\',',
 '  currency text not null default \'USD\',',
 '  monthly_budget numeric(14,2),',
+'  language text not null default \'en\' check (language in (\'en\',\'ar\')),',
 '  created_at timestamptz not null default now(),',
 '  updated_at timestamptz not null default now()',
 ');',
@@ -2773,64 +3298,8 @@ var SCHEMA_SQL = [
 'grant execute on function public.recalc_all_balances() to authenticated;'
 ].join('\n');
 
-/* The Stage 2 half of the schema, shown on its own in the migration dialog. */
-var STAGE2_SQL = (function () {
-  var marker = 'STAGE 2 - bank accounts';
-  var i = SCHEMA_SQL.indexOf(marker);
-  if (i < 0) return SCHEMA_SQL;
-  var start = SCHEMA_SQL.lastIndexOf('/*', i);
-  return SCHEMA_SQL.slice(start < 0 ? i : start);
-})();
-
-function openMigrationModal() {
-  var root = $('#modal-root');
-  root.innerHTML = '<div class="overlay" data-mig-overlay="1"><div class="modal wide" role="dialog" aria-modal="true">' +
-    '<div class="modal-head"><h3>Stage 2 migration SQL</h3>' +
-    '<button class="icon-btn" type="button" data-close="1" aria-label="Close">✕</button></div>' +
-    '<div class="modal-body">' +
-      '<p class="muted small" style="margin:0 0 10px">Run this once in Supabase → SQL Editor. It is safe to re-run: every statement is guarded.</p>' +
-      '<pre class="code" id="mig-sql" style="max-height:340px"></pre>' +
-      '<div style="display:flex;gap:8px;margin-top:10px">' +
-        '<button class="btn small" type="button" id="mig-copy">Copy migration</button>' +
-        '<button class="btn ghost small" type="button" id="mig-retry">Re-check database</button>' +
-      '</div>' +
-      '<p class="hint" id="mig-msg"></p>' +
-    '</div>' +
-    '<div class="modal-foot"><button class="btn ghost" type="button" data-close="1">Close</button></div>' +
-    '</div></div>';
-
-  $('#mig-sql').textContent = STAGE2_SQL;
-  $('[data-mig-overlay]').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
-  $('#mig-copy').addEventListener('click', function () {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(STAGE2_SQL).then(
-        function () { setMsg('#mig-msg', 'Migration copied to the clipboard.', 'ok'); },
-        function () { setMsg('#mig-msg', 'Copy blocked. Select the SQL manually.', 'err'); }
-      );
-    } else {
-      var r = document.createRange();
-      r.selectNodeContents($('#mig-sql'));
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
-      setMsg('#mig-msg', 'Text selected. Press Ctrl/Cmd+C.', 'ok');
-    }
-  });
-  $('#mig-retry').addEventListener('click', async function () {
-    setMsg('#mig-msg', 'Checking…');
-    try {
-      await loadRole();
-      await loadAccounts();
-      await loadCategories();
-      buildLedgers(true);
-      renderShell();
-      renderStage2Notice();
-      closeModal();
-      if (stage2Ready) { toast('Stage 2 database detected', 'ok'); showView('accounts'); }
-      else { toast('Still missing. Run the migration first.', 'err'); }
-    } catch (e) { setMsg('#mig-msg', errMsg(e), 'err'); }
-  });
-}
+/* Schema reference is kept in the source for maintainers only. It is never
+   rendered into the interface, and there is no copy or download control. */
 
 /* ============================================================
    Auth screen
@@ -2841,10 +3310,8 @@ function setAuthMode(mode) {
   authMode = mode;
   $$('.tab').forEach(function (t) { t.classList.toggle('active', t.getAttribute('data-mode') === mode); });
   $('#f-name').classList.toggle('hidden', mode !== 'signup');
-  $('#auth-submit').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
-  $('#auth-lead').textContent = mode === 'signup'
-    ? 'Create your account. A profile and starter categories are created automatically.'
-    : 'Sign in to your personal finance workspace.';
+  $('#auth-submit').textContent = mode === 'signup' ? t('auth.submitSignup') : t('auth.submitSignin');
+  $('#auth-lead').textContent = mode === 'signup' ? t('auth.leadSignup') : t('auth.lead');
   $('#auth-pass').setAttribute('autocomplete', mode === 'signup' ? 'new-password' : 'current-password');
   setMsg('#auth-msg', '');
 }
@@ -2859,7 +3326,7 @@ async function handleAuthSubmit(ev) {
   if (authMode === 'signup' && pass.length < 6) { setMsg('#auth-msg', 'Use a password of at least 6 characters.', 'err'); return; }
   btn.disabled = true;
   var label = btn.textContent;
-  btn.textContent = authMode === 'signup' ? 'Creating account…' : 'Signing in…';
+  btn.textContent = authMode === 'signup' ? t('auth.busySignup') : t('auth.busySignin');
   setMsg('#auth-msg', '');
   try {
     if (!sb) throw new Error('Not connected to a Supabase project.');
@@ -2890,7 +3357,7 @@ async function handleAuthSubmit(ev) {
     setMsg('#auth-msg', errMsg(e), 'err');
   } finally {
     btn.disabled = false;
-    btn.textContent = authMode === 'signup' ? 'Create account' : label;
+    btn.textContent = authMode === 'signup' ? t('auth.submitSignup') : t('auth.submitSignin');
   }
 }
 
@@ -2939,6 +3406,16 @@ function findTx(id) {
 }
 
 function wireEvents() {
+  /* The window language buttons must work even before the app is signed in,
+     so they are bound directly rather than through the delegated handler. */
+  document.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('.lang-btn') : null;
+    if (!b) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    setLanguage(b.getAttribute('data-lang'));
+  }, true);
+
   document.addEventListener('click', function (ev) {
     var t = ev.target;
     if (!t || !t.closest) return;
@@ -3006,6 +3483,9 @@ function wireEvents() {
     if (t.closest('#signout')) { doSignOut(); return; }
     if (t.closest('#burger')) { $('#sidebar').classList.toggle('open'); return; }
 
+    var lb = t.closest('.lang-btn');
+    if (lb) { setLanguage(lb.getAttribute('data-lang')); return; }
+
     var na = t.closest('[data-newacct]');
     if (na) { openAccountModal(null); return; }
     var ea = t.closest('[data-acct-edit]');
@@ -3025,8 +3505,6 @@ function wireEvents() {
     if (nt2) { openTransferModal(); return; }
     var dtf = t.closest('[data-del-transfer]');
     if (dtf) { deleteTransfer(dtf.getAttribute('data-del-transfer')); return; }
-
-    if (t.closest('[data-stage2-sql]')) { openMigrationModal(); return; }
   });
 
 
@@ -3083,29 +3561,15 @@ function wireEvents() {
 /* ============================================================
    Init
    ============================================================ */
-function init() {
+async function init() {
   buildLedgers();
-  var pre = $('#schema-pre');
-  if (pre) pre.textContent = SCHEMA_SQL;
+
+  /* Language first, before anything paints: the stored preference decides
+     dir, font and every static label. */
+  var initial = await loadLanguage();
+  applyLang(initial, { silent: true });
 
   $('#setup-form').addEventListener('submit', handleSetup);
-  $('#copy-sql').addEventListener('click', function () {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(SCHEMA_SQL).then(function () { toast('Schema copied', 'ok'); }, function () { toast('Copy failed — select the text manually', 'err'); });
-    } else {
-      var r = document.createRange();
-      r.selectNodeContents($('#schema-pre'));
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
-      toast('Text selected — press Ctrl/Cmd+C', 'ok');
-    }
-  });
-  $('#cfg-change').addEventListener('click', async function () {
-    var ok = await askConfirm('Change Supabase project', 'Forget the saved connection details and enter a different project?', 'Change project');
-    if (!ok) return;
-    await resetConnection();
-  });
 
   $$('.tab').forEach(function (tab) {
     tab.addEventListener('click', function () { setAuthMode(tab.getAttribute('data-mode')); });

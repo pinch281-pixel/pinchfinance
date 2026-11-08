@@ -19,12 +19,13 @@
    Developed under PINCH Software.
    ========================================================================== */
 
-/* Project connection. Only the public publishable (anon) key belongs here.
    The secret / service-role key must never be shipped to a browser. */
 var CONFIG = {
   url: 'https://zfhosceosdowhbilnoao.supabase.co',
   anonKey: 'sb_publishable_xLBNR_CmkqklT8dy12AfAQ_Ti-PUNRB'
 };
+
+/* ---------- helpers ---------- */
 
 var sb = null;
 var session = null;
@@ -217,13 +218,20 @@ function requireSession() {
 
 async function loadProfile() {
   requireSession();
-  var res = await sb.from('profiles').select('id,full_name,currency,monthly_budget,created_at').eq('id', user.id).maybeSingle();
+  /* language may not exist on older projects; the query falls back. */
+  var res = await sb.from('profiles').select('id,full_name,currency,monthly_budget,language,created_at').eq('id', user.id).maybeSingle();
+  if (res.error && isMissingTable(res.error)) {
+    res = await sb.from('profiles').select('id,full_name,currency,monthly_budget,created_at').eq('id', user.id).maybeSingle();
+  }
   if (res.error) throw res.error;
   if (!res.data) {
     var meta = (user.user_metadata && user.user_metadata.full_name) || '';
-    var ins = await sb.from('profiles').upsert({ id: user.id, full_name: meta, currency: 'USD' }).select().maybeSingle();
+    var ins = await sb.from('profiles').upsert({ id: user.id, full_name: meta, currency: 'USD', language: lang }).select().maybeSingle();
+    if (ins.error) {
+      ins = await sb.from('profiles').upsert({ id: user.id, full_name: meta, currency: 'USD' }).select().maybeSingle();
+    }
     if (ins.error) throw ins.error;
-    profile = ins.data || { id: user.id, full_name: meta, currency: 'USD' };
+    profile = ins.data || { id: user.id, full_name: meta, currency: 'USD', language: lang };
   } else {
     profile = res.data;
   }
